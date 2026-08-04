@@ -1,0 +1,31 @@
+import time
+from XRPLib.rangefinder import Rangefinder
+from XRPLib.reflectance import Reflectance
+
+rangefinder = Rangefinder.get_default_rangefinder()
+
+reflectance = Reflectance.get_default_reflectance()
+
+
+print('The robot will now measure the distance 10 times.')
+time.sleep(1)
+for count in range(10):
+  print('Distance value:')
+  print(rangefinder.distance())
+  print('------------')
+  time.sleep(0.9)
+print('The robot will now read the reflectance sensor values 10 times.')
+time.sleep(1)
+for count2 in range(10):
+  print('Left reflectance value:')
+  print(reflectance.get_left())
+  print('Right reflectance value:')
+  print(reflectance.get_right())
+  print('-------------')
+  time.sleep(0.9)
+print('The sensor readings are complete.')
+
+
+
+## 2026-07-29 14:07:43
+##XRPBLOCKS {"blocks":{"languageVersion":0,"blocks":[{"type":"text_print","id":"(m|gj($OfPT^J88h5Nu0","x":393,"y":193,"inputs":{"TEXT":{"shadow":{"type":"text","id":"l;@x!]XZg=C`1)2va_zf","fields":{"TEXT":"The robot will now measure the distance 10 times."}}}},"next":{"block":{"type":"xrp_sleep","id":"~fzd})ifaU`jgf8ZHF=z","inputs":{"TIME":{"shadow":{"type":"math_number","id":"f+cRA=xL-YfK9;EEvIR1","fields":{"NUM":1}}}},"next":{"block":{"type":"controls_repeat_ext","id":"wo/N8t}t.Uw@~j,3hzya","inputs":{"TIMES":{"shadow":{"type":"math_number","id":"G`(O~yy#=v%^];yQ=B=V","fields":{"NUM":10}}},"DO":{"block":{"type":"text_print","id":"RUx%A4LM#VrmDgVTZcC2","inputs":{"TEXT":{"shadow":{"type":"text","id":"hmlso5QJ$Tnm1XZPjJuH","fields":{"TEXT":"Distance value:"}}}},"next":{"block":{"type":"text_print","id":"Y];bAzZx`5kB%}=T[I%~","inputs":{"TEXT":{"shadow":{"type":"text","id":";:pr,4s|AOj|l/BtI5%@","fields":{"TEXT":"abc"}},"block":{"type":"xrp_getsonardist","id":"/BHG56LSDN[|BvjjqA(Y"}}},"next":{"block":{"type":"text_print","id":"PqXS~nu:}X)d@gg^{0}R","inputs":{"TEXT":{"shadow":{"type":"text","id":";:pr,4s|AOj|l/BtI5%@","fields":{"TEXT":"------------"}}}},"next":{"block":{"type":"xrp_sleep","id":"Emy.{Au}a0.`/c_-RntW","inputs":{"TIME":{"shadow":{"type":"math_number","id":")!u90QLeUkBXC.5r?r3a","fields":{"NUM":0.9}}}}}}}}}}}}},"next":{"block":{"type":"text_print","id":"@.;kiNt?*+=R;:o*IL83","inputs":{"TEXT":{"shadow":{"type":"text","id":"BLO@,}t[em|!^uNUB=3T","fields":{"TEXT":"The robot will now read the reflectance sensor values 10 times."}}}},"next":{"block":{"type":"xrp_sleep","id":"hGUA4oqXSLn)ZrT@oF3=","inputs":{"TIME":{"shadow":{"type":"math_number","id":"P4DfB@+eO$+)fA}~i}|J","fields":{"NUM":1}}}},"next":{"block":{"type":"controls_repeat_ext","id":"r8qEJVE%:NusJE[QTBZ+","inputs":{"TIMES":{"shadow":{"type":"math_number","id":"+0z/Xf!iOQih]lI}g2?z","fields":{"NUM":10}}},"DO":{"block":{"type":"text_print","id":"}u!jaR75AADaT*!u}nN]","inputs":{"TEXT":{"shadow":{"type":"text","id":"wY+6ltdl`N::?g2|J.0!","fields":{"TEXT":"Left reflectance value:"}}}},"next":{"block":{"type":"text_print","id":"uy7YnIyiuBLB4X.X1tIt","inputs":{"TEXT":{"shadow":{"type":"text","id":"$ygxO-2}Q74IOn.lqu=D","fields":{"TEXT":"abc"}},"block":{"type":"xrp_l_refl","id":"*-e{+|a:lv_:r#3p]yK6"}}},"next":{"block":{"type":"text_print","id":"jj;?B_*E5X:[[!^(?L@0","inputs":{"TEXT":{"shadow":{"type":"text","id":"ktDt4Xb/RXv78+vM[523","fields":{"TEXT":"Right reflectance value:"}}}},"next":{"block":{"type":"text_print","id":"IM{9Br74jL4W(_V8/b5p","inputs":{"TEXT":{"shadow":{"type":"text","id":"MOmWfJXtcV|OM!5yuPop","fields":{"TEXT":"abc"}},"block":{"type":"xrp_r_refl","id":"3puHczpzK8bdyJSEv*Hk"}}},"next":{"block":{"type":"text_print","id":"n^|7i8UJoi2e(cT,@k-W","inputs":{"TEXT":{"shadow":{"type":"text","id":"$=J|alUXL[hFk5I=,zQO","fields":{"TEXT":"-------------"}}}},"next":{"block":{"type":"xrp_sleep","id":"NQOJdMwbi|693)#j32,Z","inputs":{"TIME":{"shadow":{"type":"math_number","id":"6@#C`X8R~Zm}I~O+S1Ea","fields":{"NUM":0.9}}}}}}}}}}}}}}}}},"next":{"block":{"type":"text_print","id":"+8Ol2KP@P5-cl/);ok`l","inputs":{"TEXT":{"shadow":{"type":"text","id":"+^,aP+UUBc~@:4KnJt5A","fields":{"TEXT":"The sensor readings are complete."}}}}}}}}}}}}}}}}}]},"variables":[{"name":"item","id":"dd-~qR|Y8067Rw6PQ`CU"}]}
