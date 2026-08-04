@@ -19,6 +19,39 @@ def deadzone(value, threshold=0.1):
         return 0.0
     return value
 
+def performChallenge1():
+    return True
+
+def performChallenge2():
+    return True
+
+def performChallenge3():
+    return True
+
+def performChallenge4():
+    return True
+
+def performChallenge5():
+    return True
+
+def performChallenge6():
+    return True
+
+def performChallenge7():
+    return True
+
+def performChallenge8():
+    return True
+
+def performChallenge9():
+    return True
+
+def performChallenge10():
+    return True
+
+def performChallenge11():
+    return True
+
 # Start an infinite loop
 while True:
     if pestolink.is_connected():  # Check if a BLE connection is established
@@ -38,3 +71,4 @@ while True:
     else: #default behavior when no BLE connection is open
         drivetrain.arcade(0, 0)
         servo_one.set_angle(70)
+
