@@ -16,7 +16,9 @@ DPAD_LEFT = 14
 DPAD_RIGHT = 15
 STOP_BUTTON = 9
 
-PIVOT_EFFORT = 0.65
+TURN_EFFORT_HIGH = 0.80
+TURN_EFFORT_LOW = 0.55
+SLOW_ZONE_DEG = 20.0
 TURN_TOLERANCE_DEG = 3.0
 TURN_TIMEOUT_S = 5.0
 SETTLE_TIME_S = 0.25
@@ -37,8 +39,8 @@ def stop_requested(pestolink):
     )
 
 
-def pivot_turn(pestolink, degrees):
-    """Pivot to an IMU target. Positive is left; negative is right."""
+def in_place_turn(pestolink, degrees):
+    """Counter-rotate both wheels to an IMU target."""
     target = normalize_angle(imu.get_yaw() + degrees)
     start = time.ticks_ms()
 
@@ -50,6 +52,7 @@ def pivot_turn(pestolink, degrees):
         )
     )
 
+    drivetrain.set_zero_effort_behavior(True)
     try:
         while True:
             if stop_requested(pestolink):
@@ -70,15 +73,22 @@ def pivot_turn(pestolink, degrees):
                 )
                 return False
 
+            effort = TURN_EFFORT_HIGH
+            if abs(error) <= SLOW_ZONE_DEG:
+                effort = TURN_EFFORT_LOW
+
             if error > 0:
-                # Left: drive the right wheel and rest the left wheel.
-                drivetrain.set_effort(0, PIVOT_EFFORT)
+                # Left: left wheel backward, right wheel forward.
+                drivetrain.set_effort(-effort, effort)
             else:
-                # Right: drive the left wheel and rest the right wheel.
-                drivetrain.set_effort(PIVOT_EFFORT, 0)
+                # Right: left wheel forward, right wheel backward.
+                drivetrain.set_effort(effort, -effort)
 
             time.sleep(0.01)
     finally:
+        drivetrain.stop()
+        time.sleep(0.10)  # brake briefly instead of coasting past the target
+        drivetrain.set_zero_effort_behavior(False)
         drivetrain.stop()
         time.sleep(SETTLE_TIME_S)
 
@@ -113,13 +123,13 @@ def main():
                 wait_for_release(pestolink, DPAD_LEFT)
                 if pestolink.get_button(STOP_BUTTON):
                     break
-                pivot_turn(pestolink, 90)
+                in_place_turn(pestolink, 90)
 
             elif pestolink.get_button(DPAD_RIGHT):
                 wait_for_release(pestolink, DPAD_RIGHT)
                 if pestolink.get_button(STOP_BUTTON):
                     break
-                pivot_turn(pestolink, -90)
+                in_place_turn(pestolink, -90)
 
             time.sleep(0.02)
     finally:

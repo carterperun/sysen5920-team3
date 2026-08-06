@@ -20,7 +20,10 @@ START_HEADING = 0
 # Motion and sensor tuning values.
 CELL_DISTANCE_CM = 30.48
 DRIVE_EFFORT = 0.45
-PIVOT_EFFORT = 0.65
+TURN_EFFORT_HIGH = 0.80
+TURN_EFFORT_LOW = 0.55
+TURN_SLOW_ZONE_DEG = 20.0
+TURN_TOLERANCE_DEG = 3.0
 WALL_DISTANCE_CM = 20.0
 SETTLE_TIME_S = 0.20
 SENSOR_SAMPLES = 5
@@ -61,43 +64,46 @@ def normalize_angle(angle):
     return angle
 
 
-def pivot_turn(degrees):
-    """Turn using only one wheel, reducing the torque needed for tire scrub.
-
-    Positive degrees turn left; negative degrees turn right.
-    """
+def in_place_turn(degrees):
+    """Counter-rotate both wheels to an IMU target."""
     target = normalize_angle(imu.get_yaw() + degrees)
     start = time.ticks_ms()
 
+    drivetrain.set_zero_effort_behavior(True)
     try:
         while True:
             error = normalize_angle(target - imu.get_yaw())
-            if abs(error) <= 3.0:
+            if abs(error) <= TURN_TOLERANCE_DEG:
                 return
 
             if time.ticks_diff(time.ticks_ms(), start) > \
                     MOTION_TIMEOUT_S * 1000:
-                raise RuntimeError("Pivot turn timed out")
+                raise RuntimeError("In-place turn timed out")
+
+            effort = TURN_EFFORT_HIGH
+            if abs(error) <= TURN_SLOW_ZONE_DEG:
+                effort = TURN_EFFORT_LOW
 
             if error > 0:
-                # Left turn: pivot around the stationary left wheel.
-                drivetrain.set_effort(0, PIVOT_EFFORT)
+                drivetrain.set_effort(-effort, effort)
             else:
-                # Right turn: pivot around the stationary right wheel.
-                drivetrain.set_effort(PIVOT_EFFORT, 0)
+                drivetrain.set_effort(effort, -effort)
 
             time.sleep(0.01)
     finally:
         drivetrain.stop()
+        time.sleep(0.10)
+        drivetrain.set_zero_effort_behavior(False)
+        drivetrain.stop()
 
 
 def turn_right():
-    pivot_turn(-90 * TURN_ANGLE_SCALE)
+    in_place_turn(-90 * TURN_ANGLE_SCALE)
     time.sleep(SETTLE_TIME_S)
 
 
 def turn_left():
-    pivot_turn(90 * TURN_ANGLE_SCALE)
+    in_place_turn(90 * TURN_ANGLE_SCALE)
     time.sleep(SETTLE_TIME_S)
 
 
