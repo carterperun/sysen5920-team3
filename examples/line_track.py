@@ -73,6 +73,25 @@ Standalone: running the file directly starts following immediately.
 from XRPLib.defaults import *
 import time
 
+# WHEEL GEOMETRY FIX (8/8): this robot runs ~3.0-3.1 inch (7.75cm)
+# wheels; XRPLib's default drivetrain assumes the stock 6.0cm wheels,
+# so every encoder distance was under-reported ~29percent — the
+# "drives too far" mystery, the 21.5cm "ring radius" (really ~28cm),
+# all of it. Correct the library's wheel diameter so every distance
+# in every program is real centimeters.
+WHEEL_DIAM_CM = 7.75
+try:
+    if hasattr(drivetrain, "wheel_diam"):
+        drivetrain.wheel_diam = WHEEL_DIAM_CM
+        _WHEEL_FIX = "wheel_diam corrected to %.2fcm" % WHEEL_DIAM_CM
+    else:
+        _WHEEL_FIX = ("*** drivetrain has no wheel_diam attribute — "
+                      "XRPLib version differs, distances still ~29%% "
+                      "over! Report this. ***")
+except Exception as _e:
+    _WHEEL_FIX = "*** wheel fix FAILED: %r ***" % _e
+
+
 # ------------------------------- LOGGING ---------------------------------
 # v4.1: line_track gets its own BLACK-BOX LOG (line_log.txt on flash),
 # same scheme as sumo — timestamped, flushed per line, auto-rotated.
@@ -120,6 +139,19 @@ def _rotate_log():
         pass
 
 COUNTS = {"boosts": 0, "backups": 0, "refinds": 0}
+
+def cal_derived_delta():
+    """v4.6: buffered trip delta from tapecal.txt (supervisor MENU +
+    LEFT TRIGGER calibration), or None. Half the measured contrast."""
+    try:
+        with open("tapecal.txt") as f:
+            fl, fr, tl, tr = [float(x) for x in f.read().split(",")]
+        c = (fl + fr) / 2 - (tl + tr) / 2
+        if c <= 0.02:
+            return None
+        return min(0.15, max(0.025, c * 0.5))
+    except Exception:
+        return None
 
 # ----------------------------- CONFIGURATION -----------------------------
 
@@ -362,12 +394,21 @@ def _finish_forward(abort, from_pos):
 def run(sv=None):
     """Entry point for the main_code supervisor (or standalone)."""
     abort = sv.check_abort if sv else (lambda: None)
+    global TAPE_DELTA, LOST_DELTA
+    _cal = cal_derived_delta()
+    if _cal is not None:
+        TAPE_DELTA = _cal
+        LOST_DELTA = max(0.02, _cal * 0.6)
     _rotate_log()
     COUNTS["boosts"] = COUNTS["backups"] = COUNTS["refinds"] = 0
     # v4.5: STANDARD LAUNCH = robot parked on the BLACK FLOOR aimed at
     # the line. Sample the floor, then creep forward onto the tape.
     _capture_floor()
-    log("=== LINE start v4.5: base=%.2f boost=%.2f kick=%.2f kp=%.2f "
+    if _cal is not None:
+        log("calibration: tapecal.txt -> tape delta %.3f, lost delta "
+            "%.3f" % (TAPE_DELTA, LOST_DELTA))
+    log("wheels: %s" % _WHEEL_FIX)
+    log("=== LINE start v4.7: base=%.2f boost=%.2f kick=%.2f kp=%.2f "
         "sign=%+d tapedelta=%.2f lostdelta=%.2f endmin=%.0fcm "
         "batt=%.2fV floor L=%.3f R=%.3f"
         % (BASE_EFFORT, BOOST_EFFORT, LAUNCH_KICK_EFFORT, KP,

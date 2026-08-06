@@ -1,6 +1,44 @@
 """
 sumo_auto.py — SYSEN 5920 Team 3
-XRP Proving Ground: "Sumo" challenge (autonomous attempt) — v4.13
+XRP Proving Ground: "Sumo" challenge (autonomous attempt) — v4.21
+
+v4.21: IMU DRIFT GUARD at launch (parked drift >3 deg/s -> one
+recalibration attempt -> red abort with "power-cycle while STILL").
+A bad power-on gyro bias makes the pose/fence map garbage.
+
+v4.20: the constant-distance echoes were a rangefinder HARDWARE
+fault (now fixed) — the v4.17 self-echo rejection built on that
+assumption is REMOVED; the sensor is trusted again.
+
+v4.19: scan margin widened (+3cm past the surveyed line, was -1) —
+blocks sitting ON the ring line were projecting just outside the
+circle and being ignored; runs ended "ring clear" with blocks still
+in. The fence and back-off-only rules still keep the robot inside.
+
+v4.18: trip threshold from tapecal.txt (MENU + LEFT TRIGGER
+calibration) when present — half the measured floor/tape contrast.
+
+v4.17: (self-echo rejection — removed in v4.20; the root cause was a
+sensor hardware fault, since repaired.)
+
+v4.16 (8/7 night logs): PADDLE STOW ON at 90 deg — after a power-on
+the unpowered paddle drooped into the rangefinder's beam and every
+scan saw a phantom "block" at a constant 10.6cm; the robot chased it
+cycle after cycle into the ring line. (The v4.3-era stow suspicion was
+right — the ANGLE was the problem, not the stow.)
+
+v4.15 (8/7 logs — "speeding past the line again"): push effort 0.7 ->
+0.55 and survey legs at 0.55 (a leg CROSSED the ring at 0.65 without a
+trip); LINE_DELTA 0.05 -> 0.04 (tape dips to 0.921-0.925 were missed
+by a hair); and a bug fix — an implausible survey chord now rejects
+the whole survey instead of rebasing Home onto a bogus midpoint (one
+run put Home 22cm off center that way).
+
+v4.14 (same night, second log pass): SCAN TARGET FILTER — the scan
+locked onto an object OUTSIDE the circle (26.6cm echo) and chased it
+over the line. Every echo (coarse scan AND fine aim) is now projected
+from the live pose and rejected if the target point lies outside the
+surveyed ring.
 
 v4.13 (8/6 night logs — "kept crossing out of the ring"): the BLUE
 PAINTER'S TAPE only reads ~0.07 below the floor (0.88-0.90 vs 0.96),
@@ -138,6 +176,9 @@ RING_RADIUS_CM = 30.0       # ring radius (measured); caps pushes/homing
 
 # SURVEY (v4.11): measure the ring before playing.
 SURVEY = True               # False = old behavior (assume start = center)
+SURVEY_EFFORT = 0.55        # v4.15: survey legs slower than approach —
+                            # one logged leg 2 CROSSED the ring line at
+                            # 0.65 without ever seeing it
 SURVEY_BACK_CM = 15.0       # back away from the first line trip before
                             # the 180 turn (customer spec)
 SENSOR_AHEAD_CM = 5.0       # reflectance sensors sit ~this far ahead of
@@ -173,7 +214,12 @@ SLIP_CHECK = True
 # The floor baseline is AUTO-SAMPLED at launch (robot starts at ring
 # center, guaranteed off the tape). A sensor trips when it moves away
 # from its own floor baseline by more than LINE_DELTA.
-LINE_DELTA = 0.05           # v4.13: THE BLUE PAINTER'S TAPE ONLY READS
+LINE_DELTA = 0.04           # v4.15: the tape dips only to 0.92-0.93 in
+                            # places (logged trips at 0.904-0.914 but
+                            # MISSES at 0.921-0.925 with the 0.05
+                            # delta) — 0.04 catches the faint spots;
+                            # the 3-read debounce guards the noise
+                            # v4.13: THE BLUE PAINTER'S TAPE ONLY READS
                             # ~0.07 BELOW THE FLOOR (0.88-0.90 vs 0.96
                             # in the 8/6 night logs) — the old 0.20 was
                             # physically impossible to trip, which is
@@ -202,11 +248,11 @@ LINE_DEBOUNCE = 3           # v4.13: 3 consecutive reads (~30ms) — the
 # _turn_pid) which addresses the real turning problem.
 APPROACH_EFFORT = 0.65      # v4.13: 0.55 still limped at 4.5V sag (the
                             # survey leg crawled 5cm in 15 seconds)
-PUSH_EFFORT = 0.7           # v4.9: raised again (0.45 -> 0.6 -> 0.7),
-                            # pushes were still slow under block+floor
-                            # friction. Line check runs every ~10ms
-                            # pass, so the tape is still sampled every
-                            # ~0.6cm even at this speed.
+PUSH_EFFORT = 0.55          # v4.15: 0.7 -> 0.55 (driver: "speeding
+                            # past the line") — every scored push in
+                            # the 8/7 log was saved by the geo-fence,
+                            # not the sensors; slower = more samples
+                            # per cm of tape and less overshoot
 TURN_EFFORT = 0.75          # v4.8: raised from 0.5 — manual-mode logs
                             # showed 0.55-effort turns timing out while
                             # 0.8-effort retries finished instantly
@@ -247,7 +293,12 @@ SWEEP_OVERDRIVE_CM = 2.0    # sensors may pass the nominal line position
 # Paddle stow (v4.4: OFF by default — introduced in v4.3, and if the
 # stow angle left the paddle in front of the rangefinder it could
 # explain the failed run; enable deliberately after a bench check).
-PADDLE_STOW = False
+PADDLE_STOW = True          # v4.16: ON — the 8/7 night scans read a
+                            # constant 10.6cm in every direction (the
+                            # unpowered paddle drooped into the
+                            # rangefinder's beam after power-on) and
+                            # the robot chased that phantom every
+                            # cycle. 90 deg is confirmed clear.
 PADDLE_STOW_DEG = 90
 
 # WIGGLE TURNS (v4.5): field friction stalls pure in-place turns, so
@@ -329,6 +380,20 @@ SAG_BATT_V = 1.05 * BATT_CELLS      # 4.2V under load: brownout territory
 LOG_TO_FILE = True
 LOG_PATH = "LOG.TXT"           # unified log — every program appends here
 HEARTBEAT_S = 0.5           # heartbeat period inside drive loops
+
+def cal_derived_delta():
+    """v4.18: buffered trip delta from tapecal.txt (written by the
+    supervisor's calibration mode — MENU + LEFT TRIGGER), or None.
+    Half the measured floor-to-tape contrast = lighting buffer."""
+    try:
+        with open("tapecal.txt") as f:
+            fl, fr, tl, tr = [float(x) for x in f.read().split(",")]
+        c = (fl + fr) / 2 - (tl + tr) / 2
+        if c <= 0.02:
+            return None
+        return min(0.15, max(0.025, c * 0.5))
+    except Exception:
+        return None
 
 # ------------------------------- LOGGING ---------------------------------
 
@@ -696,7 +761,7 @@ def survey_ring():
     the tape-measured fallback geometry, and goes home."""
     log("survey: leg 1 — driving straight to the line")
     yaw0 = imu.get_yaw()
-    out = drive_watching(APPROACH_EFFORT, None,
+    out = drive_watching(SURVEY_EFFORT, None,
                          max_cm=RING_RADIUS_CM * 1.6,
                          hold_yaw=yaw0, tag="survey1")
     if out != "line":
@@ -723,7 +788,7 @@ def survey_ring():
         go_home()
         return False
     log("survey: leg 2 — driving to the far side")
-    out = drive_watching(APPROACH_EFFORT, None,
+    out = drive_watching(SURVEY_EFFORT, None,
                          max_cm=RING_RADIUS_CM * 2.0 * 1.3,
                          hold_yaw=imu.get_yaw(), tag="survey2")
     if out != "line":
@@ -736,9 +801,15 @@ def survey_ring():
     dx, dy = ax - bx, ay - by
     r = math.sqrt(dx * dx + dy * dy) / 2.0 + SENSOR_AHEAD_CM
     if not (0.6 * RING_RADIUS_CM) < r < (1.5 * RING_RADIUS_CM):
+        # v4.15 BUG FIX: an implausible chord used to keep the fallback
+        # RADIUS but still rebase Home onto the bogus midpoint — the
+        # 8/7 log shows a 48.9cm "radius" moving Home 22cm off the real
+        # center. Now the whole survey is rejected instead.
         log("survey: measured radius %.1fcm implausible (expected ~%.0f)"
-            " — keeping the tape-measured value" % (r, RING_RADIUS_CM))
-        r = RING_RADIUS_CM
+            " — REJECTING the survey, keeping start-point geometry"
+            % (r, RING_RADIUS_CM))
+        go_home()
+        return False
     # Rebase the pose map: the surveyed center becomes (0,0) = Home.
     POSE["x"] -= cx
     POSE["y"] -= cy
@@ -751,6 +822,22 @@ def survey_ring():
     return True
 
 # ------------------------------ BEHAVIORS --------------------------------
+
+def echo_inside_ring(d):
+    """v4.14: is the point the rangefinder is echoing off actually
+    INSIDE the ring? The 8/6 night log shows the scan locking onto an
+    object at 26.6cm that was sitting outside the circle — the robot
+    then chased it across the line. The echo point is projected from
+    the live POSE along the current heading and checked against the
+    ring model; anything outside is not a target."""
+    rad = math.radians(imu.get_yaw())
+    ex = POSE["x"] + (d + SENSOR_AHEAD_CM) * math.cos(rad)
+    ey = POSE["y"] + (d + SENSOR_AHEAD_CM) * math.sin(rad)
+    # v4.19: margin +3 (was -1) — blocks sitting ON the line were
+    # projecting just outside and being ignored (8/7 log: 13-16cm
+    # echoes skipped, run ended with blocks still in the ring). The
+    # fence and back-off-only rules still keep the robot inside.
+    return math.sqrt(ex * ex + ey * ey) <= RING["r"] + 3.0
 
 def rotate_until_block():
     """Coarse: rotate in place, stop at the FIRST echo within SCAN_MAX_CM.
@@ -765,9 +852,14 @@ def rotate_until_block():
         _abort()                 # START stays live during the scan
         d = front_distance()
         if d < SCAN_MAX_CM:
-            log("scan: hit at step %d, d=%.1fcm yaw=%+.1f"
-                % (step, d, imu.get_yaw()))
-            return d
+            if not echo_inside_ring(d):
+                log("scan: echo at %.1fcm (step %d, yaw %+.1f) is "
+                    "OUTSIDE the ring — ignoring it"
+                    % (d, step, imu.get_yaw()))
+            else:
+                log("scan: hit at step %d, d=%.1fcm yaw=%+.1f"
+                    % (step, d, imu.get_yaw()))
+                return d
         yaw_before = imu.get_yaw()
         wiggle_turn(SCAN_STEP_DEG, TURN_EFFORT, timeout_s=2)
         # v4.8: motor-alive threshold loosened 3.0 -> 1.5 deg. A SLOW
@@ -788,10 +880,10 @@ def rotate_until_block():
             log("scan: step %d, d=%.1fcm yaw=%+.1f batt=%.2fV"
                 % (step, d, imu.get_yaw(), battery_voltage()))
     d = front_distance()
-    if d < SCAN_MAX_CM:
+    if d < SCAN_MAX_CM and echo_inside_ring(d):
         log("scan: hit on final look, d=%.1fcm" % d)
         return d
-    log("scan: full sweep, nothing inside %.0fcm" % SCAN_MAX_CM)
+    log("scan: full sweep, nothing (in-ring) inside %.0fcm" % SCAN_MAX_CM)
     return None
 
 def fine_aim(coarse_d):
@@ -898,6 +990,12 @@ def push_out_one_block(cycle):
     if dist is None:
         return False
     dist = fine_aim(dist)
+    if not echo_inside_ring(dist):
+        # v4.14: the fine aim can swing onto an out-of-ring object too
+        log("aim: target at %.1fcm lies OUTSIDE the ring — not chasing "
+            "it; rescanning" % dist)
+        go_home()
+        return True
 
     def near():
         return "contact" if front_distance() <= CONTACT_CM else None
@@ -997,6 +1095,10 @@ def run(sv=None):
     end the run at any moment; the supervisor catches MenuAbort and any
     crash, so this function just does the work. Crashes are logged here
     to sumo_log.txt too (and re-raised for the supervisor)."""
+    global LINE_DELTA
+    d = cal_derived_delta()
+    if d is not None:
+        LINE_DELTA = d
     if sv is not None:
         _HOOKS["abort"] = sv.check_abort
         # Supervisor launches skip the standalone boot path, so do the
@@ -1004,6 +1106,8 @@ def run(sv=None):
         # a reviewable trail in sumo_log.txt no matter how it started.
         log_selftest()
         log("===== SUMO launch (from supervisor menu) =====")
+    if d is not None:
+        log("calibration: tapecal.txt -> line delta %.3f" % d)
     try:
         drivetrain.stop()
         if PADDLE_STOW:
@@ -1017,6 +1121,32 @@ def run(sv=None):
                 log("paddle stowed at %d deg" % PADDLE_STOW_DEG)
             except Exception:
                 log("paddle stow skipped (no servo?)")
+        # v4.21 IMU drift guard: pose, fence and every turn hang off
+        # the gyro — a bad power-on bias (~25 deg/s parked drift in the
+        # 8/7 log) makes the fence map garbage and the robot WILL exit
+        # the ring. Fail loud instead.
+        _y0 = imu.get_yaw()
+        time.sleep(0.8)
+        _rate = (imu.get_yaw() - _y0) / 0.8
+        if abs(_rate) > 3.0:
+            log("*** IMU DRIFTING %+.1f deg/s while parked — "
+                "recalibrating... ***" % _rate)
+            try:
+                imu.calibrate(1)
+            except Exception as e:
+                log("imu.calibrate unavailable (%r)" % e)
+            time.sleep(0.3)
+            _y0 = imu.get_yaw()
+            time.sleep(0.8)
+            _rate = (imu.get_yaw() - _y0) / 0.8
+            if abs(_rate) > 3.0:
+                log("*** IMU STILL drifting %+.1f deg/s. POWER-CYCLE "
+                    "the robot while it sits STILL, then relaunch. "
+                    "Aborting run. ***" % _rate)
+                set_status(255, 0, 0)
+                time.sleep(1.5)
+                return
+            log("IMU recalibrated — drift now %+.1f deg/s" % _rate)
         POSE["x"] = POSE["y"] = 0.0
         RING["r"] = RING_RADIUS_CM
         RING["surveyed"] = False
@@ -1028,7 +1158,7 @@ def run(sv=None):
         try:
             log("run start: batt=%.2fV yaw=%+.1f"
                 % (battery_voltage(), imu.get_yaw()))
-            log("config v4.13: appr=%.2f push=%.2f turn=%.2f backup=%.2f "
+            log("config v4.21: appr=%.2f push=%.2f turn=%.2f backup=%.2f "
                 "ring=%.0fcm scan<%.0fcm contact<%.0fcm linedelta=%.2f "
                 "deb=%d sweep=%s survey=%s fence=%.0fcm"
                 % (APPROACH_EFFORT, PUSH_EFFORT, TURN_EFFORT,
@@ -1073,7 +1203,7 @@ def _standalone():
     from pestolink import PestoLinkAgent
     log_selftest()                   # RED LED at boot = log file broken
     log("")
-    log("=========== BOOT: sumo_auto v4.13 (standalone) ====== batt=%.2fV"
+    log("=========== BOOT: sumo_auto v4.21 (standalone) ====== batt=%.2fV"
         % battery_voltage())
     if battery_voltage() < LOW_BATT_V:
         log("*** WARNING: battery LOW for a %d-cell pack (<%.1fV). "

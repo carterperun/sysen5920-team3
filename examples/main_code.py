@@ -37,6 +37,14 @@ CONTROLS
                        point the robot AT THE TOWER first — it ranges
                        the tower, charges through, then does three
                        90-degree clearing sweeps)
+    LEFT TRIGGER    -> TAPE CALIBRATION (v1.20): flashing PURPLE.
+                       A = scan the FLOOR under the sensors, B = scan
+                       the TAPE (BLUE for ~1s while scanning). Both
+                       scanned -> solid WHITE; START returns to the
+                       menu. Saved to tapecal.txt — sumo, the line
+                       follower and push-to-line derive their trip
+                       thresholds from HALF the measured contrast (a
+                       built-in lighting buffer) at their next launch.
     Challenges live in their own files: any module with a run(sv)
     function can be wired to a MENU button via self.challenge("name").
     Upload challenge .py files alongside this one.
@@ -64,7 +72,11 @@ CONTROLS
                        TURBO also raises this speed (0.45 -> 0.6).
     D-pad LEFT      -> assist: rotate 90 deg left
     D-pad RIGHT     -> assist: rotate 90 deg right
-    D-pad DOWN      -> assist: rotate 180 deg
+    D-pad DOWN      -> assist: PUSH-TO-LINE (v1.19, semi-auto sumo):
+                       drives straight forward until the reflectance
+                       sensors catch the ring tape, then reverses back
+                       to (about) where the button was pressed.
+                       Replaces the old 180-deg turn.
   Button indices for this pad (CONFIRMED via button spy + servo test):
   START=9, A=0, B=1, X=2, Y=3, LT=6, RT=7, D-pad 12/13/14/15.
 
@@ -85,7 +97,27 @@ Positive turn() / positive yaw = LEFT (CCW). Negative = RIGHT (CW).
 
 from XRPLib.defaults import *
 from pestolink import PestoLinkAgent
+
+# WHEEL GEOMETRY FIX (8/8): this robot runs ~3.0-3.1 inch (7.75cm)
+# wheels; XRPLib's default drivetrain assumes the stock 6.0cm wheels,
+# so every encoder distance was under-reported ~29percent — the
+# "drives too far" mystery, the 21.5cm "ring radius" (really ~28cm),
+# all of it. Correct the library's wheel diameter so every distance
+# in every program is real centimeters.
+WHEEL_DIAM_CM = 7.75
+try:
+    if hasattr(drivetrain, "wheel_diam"):
+        drivetrain.wheel_diam = WHEEL_DIAM_CM
+        _WHEEL_FIX = "wheel_diam corrected to %.2fcm" % WHEEL_DIAM_CM
+    else:
+        _WHEEL_FIX = ("*** drivetrain has no wheel_diam attribute — "
+                      "XRPLib version differs, distances still ~29%% "
+                      "over! Report this. ***")
+except Exception as _e:
+    _WHEEL_FIX = "*** wheel fix FAILED: %r ***" % _e
+
 from machine import Pin, ADC
+import machine
 import time
 import math
 import sys
@@ -115,6 +147,15 @@ ABORT_BUTTONS = (8, 9)      # ANY of these = all-stop (8=Select/Back,
 # depend on one button index or a healthy radio.
 USER_ABORT_HOLD_S = 0.8     # holding the onboard USER button this long =
                             # all-stop (works even if BLE is dead)
+BLE_RESTART_S = 10.0        # v1.22: idle (menu/calibration) with NO
+                            # controller for this long -> soft-reboot
+                            # the board. The BLE stack sometimes wedges
+                            # on the first connection after power-up;
+                            # a machine.reset() re-initializes the
+                            # radio and, since this runs as main.py,
+                            # boots straight back to the menu. Never
+                            # fires mid-challenge (those have their own
+                            # 1.5s disconnect abort).
 DISCONNECT_ABORT_S = 1.5    # controller gone this long mid-run = all-stop
 STALE_ABORT_S = 1.5         # connected but NO packets arriving for this
                             # long during a challenge/assist = all-stop
@@ -160,6 +201,38 @@ ASSIST_FWD_CM = 100.0       # D-pad UP drive distance
 ASSIST_FWD_EFFORT = 0.45
 ASSIST_FWD_EFFORT_TURBO = 0.6   # auto-forward speed while TURBO is on
 OBSTACLE_STOP_CM = 15.0     # stop early if something is closer than this
+
+# PUSH-TO-LINE assist (v1.19, D-pad DOWN in MANUAL): semi-auto sumo —
+# drive forward until the reflectance sensors catch the ring tape
+# (floor-relative, matches sumo v4.15), then reverse to the start spot.
+PUSH_ASSIST_EFFORT = 0.55   # forward push speed (line stays visible)
+PUSH_ASSIST_BACK_EFFORT = 0.7
+PUSH_ASSIST_DELTA = 0.04    # reading this far below the floor = tape
+PUSH_ASSIST_MAX_CM = 60.0   # give up if no line within this distance
+PUSH_ASSIST_HOME_CM = 2.0   # stop the reverse this close to the start
+
+# TAPE CALIBRATION (v1.20, LEFT TRIGGER from the MENU): scan the floor
+# (A) and the tape (B); both together are saved to tapecal.txt. Every
+# tape-checking program (sumo, line follower, push-to-line) derives its
+# trip threshold from HALF the measured contrast — a built-in buffer
+# for lighting differences — clamped to sane bounds.
+CAL_FILE = "tapecal.txt"
+CAL_SAMPLES = 25            # ~1s of readings per scan
+CAL_MIN_DELTA = 0.025       # never trip tighter than this (noise floor)
+CAL_MAX_DELTA = 0.15        # never demand more contrast than this
+
+def cal_derived_delta():
+    """Read tapecal.txt -> buffered trip delta, or None if absent/bad.
+    (Duplicated in sumo_auto/line_track so each file stays standalone.)"""
+    try:
+        with open(CAL_FILE) as f:
+            fl, fr, tl, tr = [float(x) for x in f.read().split(",")]
+        c = (fl + fr) / 2 - (tl + tr) / 2
+        if c <= 0.02:
+            return None
+        return min(CAL_MAX_DELTA, max(CAL_MIN_DELTA, c * 0.5))
+    except Exception:
+        return None
 ASSIST_TURN_EFFORT = 0.75  # v1.16: raised from 0.55 — the logs showed
                             # first-pass turns timing out 40 deg short
                             # while EVERY 0.8-effort retry finished in
@@ -200,6 +273,8 @@ CYAN = (0, 255, 255)
 ORANGE = (255, 120, 0)
 RED = (255, 0, 0)
 WHITE = (255, 255, 255)
+PURPLE = (160, 0, 255)      # calibration mode (v1.20)
+BLUE = (0, 60, 255)         # calibration scan in progress
 BLINK_S = 0.35              # menu blink half-period
 REVERSE_BLINK_S = 0.2       # white flash period while reverse-drive is on
 
@@ -523,6 +598,70 @@ class MainCode:
             a += 360
         return a
 
+    def _cal_scan(self, what):
+        """BLUE light while sampling ~1s of reflectance readings."""
+        self.set_light(BLUE)
+        log("cal: scanning %s..." % what)
+        l = r = 0.0
+        for _ in range(CAL_SAMPLES):
+            self.check_abort()
+            l += reflectance.get_left()
+            r += reflectance.get_right()
+            time.sleep(0.04)
+        return l / CAL_SAMPLES, r / CAL_SAMPLES
+
+    def _cal_save(self, floor, tape):
+        if floor is None or tape is None:
+            return
+        contrast = (floor[0] + floor[1]) / 2 - (tape[0] + tape[1]) / 2
+        try:
+            with open(CAL_FILE, "w") as f:
+                f.write("%.4f,%.4f,%.4f,%.4f"
+                        % (floor[0], floor[1], tape[0], tape[1]))
+        except Exception as e:
+            log("*** cal: SAVE FAILED: %r ***" % e)
+            return
+        d = cal_derived_delta()
+        log("cal: SAVED — contrast %.3f -> buffered trip delta %s"
+            % (contrast, ("%.3f" % d) if d else "INVALID"))
+        if contrast < 0.03:
+            log("*** cal: WARNING — floor and tape look nearly the "
+                "same (%.3f). Re-scan with the sensors squarely over "
+                "each surface. ***" % contrast)
+
+    def calibration_mode(self):
+        """v1.20 (LEFT TRIGGER from MENU): flash PURPLE. A = scan the
+        FLOOR under the sensors, B = scan the TAPE (BLUE while
+        scanning, back to purple after). Both done -> solid WHITE;
+        START returns to the menu. Saved to tapecal.txt and picked up
+        by sumo / line follower / push-to-line at their next launch."""
+        log("CALIBRATION mode: A=floor scan, B=tape scan, START=menu")
+        floor = tape = None
+        self._ble_down_ms = None
+        while True:
+            self.check_abort()          # START -> MenuAbort -> menu
+            if not self.pesto.is_connected():
+                self.ble_watchdog()      # v1.22: 10s dead -> reboot
+                self.blink(ORANGE)
+                time.sleep(0.02)
+                continue
+            self._ble_down_ms = None
+            if floor is not None and tape is not None:
+                self.set_light(WHITE)   # solid white = calibrated
+            else:
+                self.blink(PURPLE, 0.25)
+            if self.pressed(BTN_A):
+                self.wait_release(BTN_A)
+                floor = self._cal_scan("FLOOR")
+                log("cal: FLOOR L=%.3f R=%.3f" % floor)
+                self._cal_save(floor, tape)
+            elif self.pressed(BTN_B):
+                self.wait_release(BTN_B)
+                tape = self._cal_scan("TAPE")
+                log("cal: TAPE  L=%.3f R=%.3f" % tape)
+                self._cal_save(floor, tape)
+            time.sleep(0.02)
+
     def assist_forward(self):
         """Drive ASSIST_FWD_CM straight (IMU heading hold), stopping
         early if the rangefinder sees an obstacle. START aborts.
@@ -568,6 +707,95 @@ class MainCode:
             drivetrain.stop()
             self.in_challenge = False
 
+    def assist_push_to_line(self):
+        """v1.19 (D-pad DOWN in MANUAL): semi-autonomous sumo push.
+        Samples the floor under the robot, drives straight forward
+        until the reflectance sensors catch the ring tape (floor-
+        relative detection, same scheme as sumo v4.15), then reverses
+        back to roughly where the button was pressed. START aborts
+        anywhere; caps at PUSH_ASSIST_MAX_CM / a few seconds so a
+        missed line can't carry it across the room."""
+        self.set_light(CYAN)
+        self.in_challenge = True         # arms disconnect/stale all-stop
+        hold_yaw = imu.get_yaw()
+        start_l = drivetrain.get_left_encoder_position()
+        start_r = drivetrain.get_right_encoder_position()
+
+        def traveled():
+            return ((drivetrain.get_left_encoder_position() - start_l) +
+                    (drivetrain.get_right_encoder_position() - start_r)) / 2
+
+        # floor baseline (robot is on plain floor when triggered)
+        bl = br = 0.0
+        for _ in range(8):
+            bl += reflectance.get_left()
+            br += reflectance.get_right()
+            time.sleep(0.015)
+        bl /= 8
+        br /= 8
+        delta = cal_derived_delta() or PUSH_ASSIST_DELTA
+        log("assist: PUSH-TO-LINE — floor L=%.3f R=%.3f, delta %.3f%s, "
+            "max %.0fcm" % (bl, br, delta,
+                            " (calibrated)" if delta != PUSH_ASSIST_DELTA
+                            else "", PUSH_ASSIST_MAX_CM))
+        hits = 0
+        tripped = False
+        t0 = time.ticks_ms()
+        try:
+            # ---- forward: push until the tape shows up ----
+            while True:
+                self.check_abort()
+                l = reflectance.get_left()
+                r = reflectance.get_right()
+                if (bl - l) > delta or (br - r) > delta:
+                    hits += 1
+                    if hits >= 3:
+                        tripped = True
+                        log("assist: LINE at %.1fcm (L=%.3f R=%.3f) — "
+                            "backing up" % (traveled(), l, r))
+                        break
+                else:
+                    hits = 0
+                if traveled() >= PUSH_ASSIST_MAX_CM:
+                    log("assist: no line within %.0fcm — backing up"
+                        % PUSH_ASSIST_MAX_CM)
+                    break
+                if time.ticks_diff(time.ticks_ms(), t0) > 8000:
+                    log("assist: push timed out at %.1fcm — backing up"
+                        % traveled())
+                    break
+                err = self.normalize(hold_yaw - imu.get_yaw())
+                corr = max(-FWD_CORR_MAX,
+                           min(FWD_CORR_MAX, FWD_KP * err))
+                drivetrain.set_effort(
+                    max(MIN_EFFORT, PUSH_ASSIST_EFFORT - corr),
+                    max(MIN_EFFORT, PUSH_ASSIST_EFFORT + corr))
+                time.sleep(0.01)
+            drivetrain.stop()
+            time.sleep(0.1)
+            # ---- reverse: back to (nearly) the starting spot ----
+            t0 = time.ticks_ms()
+            while True:
+                self.check_abort()
+                if traveled() <= PUSH_ASSIST_HOME_CM:
+                    break
+                if time.ticks_diff(time.ticks_ms(), t0) > 6000:
+                    log("assist: backup timed out %.1fcm from start"
+                        % traveled())
+                    break
+                err = self.normalize(hold_yaw - imu.get_yaw())
+                corr = max(-FWD_CORR_MAX,
+                           min(FWD_CORR_MAX, FWD_KP * err))
+                drivetrain.set_effort(-PUSH_ASSIST_BACK_EFFORT - corr,
+                                      -PUSH_ASSIST_BACK_EFFORT + corr)
+                time.sleep(0.01)
+            log("assist: push-to-line done (%s), ended %.1fcm from "
+                "start" % ("line found" if tripped else "no line",
+                           traveled()))
+        finally:
+            drivetrain.stop()
+            self.in_challenge = False
+
     def assist_turn(self, degrees):
         """Relative turn using the anti-friction wiggle (v1.14). One
         boosted retry if the first pass times out short."""
@@ -598,6 +826,22 @@ class MainCode:
 
     # ---------------- modes ----------------
 
+    def ble_watchdog(self):
+        """v1.22: call from idle disconnected loops. Tracks how long
+        the controller has been missing; past BLE_RESTART_S the board
+        soft-reboots to reset a wedged BLE stack (auto-relaunches into
+        the menu because this file runs as main.py)."""
+        now = time.ticks_ms()
+        if self._ble_down_ms is None:
+            self._ble_down_ms = now
+            return
+        down = time.ticks_diff(now, self._ble_down_ms) / 1000
+        if down >= BLE_RESTART_S:
+            log("*** no controller for %.0fs — SELF-RESTARTING to "
+                "reset the BLE radio ***" % down)
+            time.sleep(0.2)              # let the log line flush
+            machine.reset()
+
     def menu_mode(self):
         """Blinking pink. Motors parked. Waits for a mode pick."""
         log("MENU (batt=%.2fV)" % battery_voltage())
@@ -605,11 +849,14 @@ class MainCode:
         self.in_challenge = False
         self._user_hold_ms = None
         self.wait_release_aborts()
+        self._ble_down_ms = None
         while True:
             if not self.pesto.is_connected():
+                self.ble_watchdog()      # v1.22: 10s dead -> reboot
                 self.blink(ORANGE)
                 time.sleep(0.02)
                 continue
+            self._ble_down_ms = None
             self.blink(PINK)
             self.pesto.telemetryPrint("MENU", "FF2878")
             # One edge-scan per loop pass (pressed() consumes edges, so
@@ -631,6 +878,9 @@ class MainCode:
             if BTN_Y in hits:              # v1.18: MAZE solver
                 self.wait_release(BTN_Y)
                 return self.challenge("maze_solver")
+            if BTN_LT in hits:             # v1.20: TAPE CALIBRATION
+                self.wait_release(BTN_LT)
+                self.calibration_mode()     # exits via START (abort)
             if DPAD_UP in hits:            # v1.17: AUTO SMASH TOWER
                 self.wait_release(DPAD_UP)
                 return self.challenge("tower_smash_auto")
@@ -697,7 +947,8 @@ class MainCode:
                 self.assist_turn(-90)
                 self.set_light(GREEN)
             elif self.pressed(DPAD_DOWN):
-                self.assist_turn(180)
+                # v1.19: 180-turn replaced with the semi-auto sumo push
+                self.assist_push_to_line()
                 self.set_light(GREEN)
             else:
                 throttle = self.pesto.get_axis(THROTTLE_AXIS)
@@ -820,7 +1071,8 @@ class MainCode:
 
 log_selftest()
 log("")
-log("======== BOOT: main_code v1.18 ======== batt=%.2fV" % battery_voltage())
+log("======== BOOT: main_code v1.22 ======== batt=%.2fV" % battery_voltage())
+log("wheels: %s" % _WHEEL_FIX)
 if battery_voltage() < LOW_BATT_V:
     log("*** WARNING: battery LOW for a %d-cell pack (<%.1fV) ***"
         % (BATT_CELLS, LOW_BATT_V))
