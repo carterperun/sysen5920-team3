@@ -5,6 +5,34 @@ The SIMPLE line follower (team original, supervisor-compatible) — v4.
 Raw reflectance readings and a P-controller — no calibration. Works on
 the competition surface: tape LIGHT (~0.05) on DARK floor (~0.7).
 
+v4.5 (8/6 night logs — "never detects the line"): THE BLUE PAINTER'S
+TAPE BARELY REGISTERS. Sumo's heartbeats show it reading ~0.88-0.90
+against a ~0.96 black floor — a contrast of ~0.07, while this follower
+demanded a drop below a fixed 0.45. It could NEVER trip. v4.5 goes
+fully floor-relative:
+  * START ON THE BLACK FLOOR (this is now the expected launch): the
+    robot samples its own floor for a moment, then creeps forward up
+    to 40cm; tape = a sensor dropping TAPE_DELTA (0.05) below its own
+    floor baseline. Works for faint blue tape AND high-contrast tape.
+  * Steering is normalized by the MEASURED floor-to-tape contrast
+    (learned at first tape contact), so the P-gain has the same
+    authority on faint tape as it had on bright tape.
+  * Lost = both sensors back within LOST_DELTA (0.03) of the floor
+    baseline; the wide ambiguous band in between keeps following.
+
+v4.4 (from the 8/6 field logs — "didn't move at start, went back to
+menu"):
+  * DRIVE-ON START: the placement guard was refusing launches ("NOT ON
+    THE LINE at start") — including runs where the left sensor read
+    0.456, a hair over the 0.45 threshold, with the robot basically on
+    the tape. Refusing was the wrong move. Now, if the robot isn't
+    clearly on the tape at launch, it CREEPS FORWARD up to 25cm hunting
+    for it (per the team's original plan: start on the floor, drive
+    onto the line) and only gives up if the creep finds nothing.
+  * NOTE from the same logs: every failed run printed "base=0.42" —
+    that's v4.2 STILL ON THE ROBOT. v4.3+ prints its version in the
+    start line. Check for "LINE start v4.4" after uploading!
+
 v4.3 (from the 8/6 late logs):
   * FALSE END-OF-LINE FIX: two runs declared "END" at 17-20cm total.
     The logs show readings hovering 0.45-0.55 — right ON the old
@@ -51,7 +79,7 @@ import time
 # Retrieve via the IDE file browser. Console print stays too.
 
 LOG_TO_FILE = True
-LOG_PATH = "line_log.txt"
+LOG_PATH = "LOG.TXT"           # unified log — every program appends here
 _BOOT_MS = time.ticks_ms()
 _LOG_BROKEN = {"reported": False}
 
@@ -63,8 +91,10 @@ def battery_voltage():
         return -1.0
 
 def log(msg, console=True):
-    t = time.ticks_diff(time.ticks_ms(), _BOOT_MS) / 1000
-    line = "[%8.2fs] %s" % (t, msg)
+    t = time.ticks_ms() / 1000.0    # seconds since POWER-ON —
+    #     the same clock in every program, so LOG.TXT reads as
+    #     one continuous session timeline
+    line = "[%9.2fs][LINE ] %s" % (t, msg)
     if console:
         # v4.2: heartbeats skip the console — an attached BLE console
         # blocks ~1s per print, which starved the control loop and blinded
@@ -83,7 +113,7 @@ def log(msg, console=True):
 def _rotate_log():
     try:
         import os
-        if os.stat(LOG_PATH)[6] > 200 * 1024:
+        if os.stat(LOG_PATH)[6] > 300 * 1024:
             os.remove(LOG_PATH)
             print("line log rotated")
     except Exception:
@@ -112,11 +142,17 @@ STEER_LIMIT = 0.35          # v4.2: clamp the correction — saturated
 STEER_SIGN = -1             # flipped for this build (8/6 test)
 LOOP_S = 0.01
 
-FLOOR_MIN = 0.45            # reading BELOW this = sensor clearly on tape
-LOST_MIN = 0.58             # v4.3 hysteresis: "lost" only when BOTH
-                            # sensors read above this — the 0.45-0.58
-                            # band (the flickery readings in the logs)
-                            # counts as neither lost nor found
+# v4.5: FLOOR-RELATIVE detection (fixed thresholds can't see the blue
+# painter's tape — contrast is only ~0.07 on this floor).
+TAPE_DELTA = 0.05           # sensor this far BELOW its floor baseline
+                            # = on tape
+LOST_DELTA = 0.03           # BOTH sensors within this of the baseline
+                            # = clearly back on bare floor (lost)
+BASE = {"l": 0.93, "r": 0.93, "span": 0.5, "tape_lo": 1.0}
+                            # l/r: floor baselines sampled at launch;
+                            # span: floor-to-tape contrast (learned at
+                            # first tape contact) used to normalize
+                            # steering; tape_lo: darkest tape seen
 
 # Anti-friction wiggle on hard corrections (unchanged)
 WIGGLE = True
@@ -150,6 +186,12 @@ END_MIN_TRAVEL_CM = 30.0    # v4.3: the end rule is OFF before this much
                             # travel — sensor flicker near the start was
                             # faking "END" 2-4cm in
 
+# Drive-on start (v4.4/v4.5): START ON THE BLACK FLOOR, aimed at the
+# line — the robot creeps forward and latches on when it sees the tape
+FIND_FWD_CM = 40.0          # v4.5: 25 -> 40
+FIND_EFFORT = 0.5
+FIND_TIMEOUT_S = 4.0
+
 # End-of-line finish (v3, unchanged)
 FINISH_FWD_CM = 15.0
 FINISH_EFFORT = 0.45
@@ -170,10 +212,49 @@ def _floor_eff(e):
         return -MIN_EFFORT
     return e
 
+def _capture_floor():
+    """Sample the bare-floor baseline. The robot MUST start on the
+    black floor (not the tape) — that's the launch procedure."""
+    l = r = 0.0
+    n = 10
+    for _ in range(n):
+        l += reflectance.get_left()
+        r += reflectance.get_right()
+        time.sleep(0.02)
+    BASE["l"], BASE["r"] = l / n, r / n
+    BASE["span"] = 0.5
+    BASE["tape_lo"] = 1.0
+
+def _on_tape(vl, vr):
+    """Either sensor clearly below its own floor baseline."""
+    return (vl < BASE["l"] - TAPE_DELTA) or (vr < BASE["r"] - TAPE_DELTA)
+
+def _both_floor(vl, vr):
+    """BOTH sensors back at bare-floor level = line lost."""
+    return (vl > BASE["l"] - LOST_DELTA) and (vr > BASE["r"] - LOST_DELTA)
+
+def _note_tape(vl, vr):
+    """Learn the real floor-to-tape contrast from the darkest tape
+    reading seen — steering authority scales off this."""
+    lo = vl if vl < vr else vr
+    if lo < BASE["tape_lo"]:
+        BASE["tape_lo"] = lo
+        span = (BASE["l"] + BASE["r"]) / 2 - lo
+        if span < 0.05:
+            span = 0.05
+        if abs(span - BASE["span"]) > 0.02:
+            BASE["span"] = span
+            log("line_track: contrast learned — tape %.3f vs floor "
+                "%.3f, span %.3f" % (lo, (BASE["l"] + BASE["r"]) / 2,
+                                     span), console=False)
+
 def _steer_from_sensors():
     left = reflectance.get_left()
     right = reflectance.get_right()
-    return STEER_SIGN * (right - left) * KP, left, right
+    # v4.5: normalize by the measured contrast so faint blue tape gets
+    # the same steering authority as bright tape
+    err = STEER_SIGN * (right - left) / BASE["span"]
+    return err * KP, left, right
 
 def _backup_on_line(abort):
     """Hard-stuck: reverse BACKUP_CM while still steering on the line."""
@@ -209,7 +290,7 @@ def _refind_backwards(abort):
             abort()
             left = reflectance.get_left()
             right = reflectance.get_right()
-            if left < FLOOR_MIN or right < FLOOR_MIN:
+            if _on_tape(left, right):
                 log("line_track: refound tape after %.1fcm back"
                       % (start - _avg_pos()))
                 return True
@@ -222,6 +303,39 @@ def _refind_backwards(abort):
                 log("line_track: refind backup stalled — giving up")
                 return False
             drivetrain.set_effort(-REFIND_EFFORT, -REFIND_EFFORT)
+            time.sleep(LOOP_S)
+    finally:
+        drivetrain.stop()
+
+def _drive_onto_line(abort):
+    """v4.5: standard launch — start on the black floor, creep straight
+    forward until a sensor drops below the floor baseline (= the blue
+    tape). True = on the line now."""
+    start = _avg_pos()
+    t0 = time.ticks_ms()
+    log("line_track: creeping forward up to %.0fcm to find the tape "
+        "(floor base L=%.3f R=%.3f, trip delta %.2f)"
+        % (FIND_FWD_CM, BASE["l"], BASE["r"], TAPE_DELTA))
+    try:
+        while True:
+            abort()
+            vl = reflectance.get_left()
+            vr = reflectance.get_right()
+            if _on_tape(vl, vr):
+                _note_tape(vl, vr)
+                log("line_track: found the tape after %.1fcm "
+                    "(L=%.3f R=%.3f)" % (_avg_pos() - start, vl, vr))
+                return True
+            if _avg_pos() - start >= FIND_FWD_CM:
+                log("*** no tape within %.0fcm ahead — check placement "
+                    "and relaunch ***" % FIND_FWD_CM)
+                return False
+            if time.ticks_diff(time.ticks_ms(), t0) \
+                    > FIND_TIMEOUT_S * 1000:
+                log("*** creep-to-line stalled/timed out — check "
+                    "placement and relaunch ***")
+                return False
+            drivetrain.set_effort(FIND_EFFORT, FIND_EFFORT)
             time.sleep(LOOP_S)
     finally:
         drivetrain.stop()
@@ -250,16 +364,18 @@ def run(sv=None):
     abort = sv.check_abort if sv else (lambda: None)
     _rotate_log()
     COUNTS["boosts"] = COUNTS["backups"] = COUNTS["refinds"] = 0
-    log("=== LINE start v4.3: base=%.2f boost=%.2f kick=%.2f kp=%.2f "
-        "sign=%+d lost>%.2f endmin=%.0fcm batt=%.2fV L=%.3f R=%.3f"
+    # v4.5: STANDARD LAUNCH = robot parked on the BLACK FLOOR aimed at
+    # the line. Sample the floor, then creep forward onto the tape.
+    _capture_floor()
+    log("=== LINE start v4.5: base=%.2f boost=%.2f kick=%.2f kp=%.2f "
+        "sign=%+d tapedelta=%.2f lostdelta=%.2f endmin=%.0fcm "
+        "batt=%.2fV floor L=%.3f R=%.3f"
         % (BASE_EFFORT, BOOST_EFFORT, LAUNCH_KICK_EFFORT, KP,
-           STEER_SIGN, LOST_MIN, END_MIN_TRAVEL_CM, battery_voltage(),
-           reflectance.get_left(), reflectance.get_right()))
-    if (reflectance.get_left() > FLOOR_MIN and
-            reflectance.get_right() > FLOOR_MIN):
-        log("*** NOT ON THE LINE at start (both sensors read floor). "
-            "Place the sensors over the tape and relaunch. ***")
-        return
+           STEER_SIGN, TAPE_DELTA, LOST_DELTA, END_MIN_TRAVEL_CM,
+           battery_voltage(), BASE["l"], BASE["r"]))
+    if not _on_tape(reflectance.get_left(), reflectance.get_right()):
+        if not _drive_onto_line(abort):
+            return
     lost_since = None
     lost_pos = 0.0
     lost_events = []             # positions where the line was lost
@@ -289,10 +405,13 @@ def run(sv=None):
                 steer = -STEER_LIMIT
             pos = _avg_pos()
 
+            if _on_tape(left, right):
+                _note_tape(left, right)      # keep learning contrast
+
             # ---------- lost line: refind backwards / detect the end ----
-            # v4.3: LOST_MIN (not FLOOR_MIN) — hysteresis keeps the
-            # ambiguous 0.45-0.58 band from flickering into "lost"
-            if left > LOST_MIN and right > LOST_MIN:
+            # v4.5: lost = BOTH sensors back at the floor baseline; the
+            # wide ambiguous band in between keeps following
+            if _both_floor(left, right):
                 if lost_since is None:
                     lost_since = now
                     lost_pos = pos           # where tape was last seen

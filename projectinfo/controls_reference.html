@@ -133,16 +133,16 @@
       <div class="what">Enter <b>MANUAL</b> driving mode</div></div>
     <div class="row"><div class="keys"><kbd class="b">B</kbd></div>
       <div class="what">Launch <b>LINE FOLLOWER</b> <span style="color:var(--muted)">(line_track.py — simple tracker, no calibration)</span>
-      <small>Place the robot straddling the line FIRST — the B press is the start (light goes cyan). Stops itself when the line ends; START stops it anytime.</small></div></div>
+      <small>START ON THE BLACK FLOOR aimed at the line — it samples the floor, creeps forward up to 40 cm, and latches onto the blue tape when a sensor sees it. Stops itself when the line ends; START stops it anytime.</small></div></div>
     <div class="row"><div class="keys"><kbd class="x">X</kbd></div>
       <div class="what">Launch <b>SUMO</b>
-      <small>Place the robot near the RING CENTER first — the X press is the start. It first SURVEYS the ring (straight to the line, back, 180&deg;, across to the far line) to set Home at the true center, then hunts blocks. A geo-fence keeps every move inside the circle.</small></div></div>
+      <small>Place the robot near the RING CENTER first — the X press is the start. It first SURVEYS the ring (straight to the line, back, 180&deg;, across to the far line) to set Home at the true center, then hunts blocks. A geo-fence keeps every move inside the circle, and any line sighting means back-up-and-turn only — it never drives forward past the line.</small></div></div>
     <div class="row"><div class="keys"><kbd class="y">Y</kbd></div>
       <div class="what">Launch <b>MAZE</b> <span style="color:var(--muted)">(maze_solver.py — right-wall follower)</span>
-      <small>Place the robot in the START cell facing NORTH (toward the goal end) first — the Y press is the start. Turns lock to compass headings so 90&deg;s can't drift.</small></div></div>
+      <small>Place the robot in the START cell facing NORTH (toward the goal end) first — the Y press is the start. Turns lock to compass headings so 90&deg;s can't drift. Light: <b>yellow</b> = scanning at a cell, <b>green</b> = driving into a new cell, <b>red</b> = backtracking into a visited cell.</small></div></div>
     <div class="row"><div class="keys"><kbd>D-Pad &#8593;</kbd></div>
       <div class="what">Launch <b>AUTO SMASH TOWER</b> <span style="color:var(--muted)">(tower_smash_auto.py)</span>
-      <small>Point the robot AT THE TOWER first. It ranges the tower, charges through it +20 cm at high speed, backs up to the tower spot, then does three 90&deg; clearing sweeps.</small></div></div>
+      <small>Point the robot AT THE TOWER first. It ranges the tower, charges through it +5 cm at high speed, then locks its heading and spins in place ~3 s to clear the bricks before re-facing where it started.</small></div></div>
     <div class="row"><div class="keys"><kbd class="sys">any button</kbd></div>
       <div class="what">Button spy: every press in the menu logs its index to <b>main_log.txt</b>
       <small>Use it to verify what your controller calls START, triggers, D-pad…</small></div></div>
@@ -177,15 +177,69 @@
   </div>
 
   <!-- ================= GAMEPAD ================= -->
-  <h2>Controller map</h2>
+  <h2><span class="sw led-pink blink-slow"></span>Controller map &#183; MENU</h2>
   <div class="card padwrap">
     <svg viewBox="0 0 640 330" width="100%" style="max-width:640px">
-      <!-- body -->
       <path d="M120 90 Q90 88 68 108 Q30 146 24 220 Q20 272 52 284 Q84 296 116 250
                Q136 222 168 222 L472 222 Q504 222 524 250 Q556 296 588 284
                Q620 272 616 220 Q610 146 572 108 Q550 88 520 90 Z"
             fill="#232734" stroke="#3a4154" stroke-width="2"/>
-      <!-- triggers -->
+      <!-- triggers / bumpers -->
+      <rect x="96" y="46" width="110" height="20" rx="10" fill="#2b3040" stroke="#3a4154"/>
+      <text x="151" y="60" text-anchor="middle" style="font-size:10px">LT</text>
+      <text x="151" y="36" text-anchor="middle" class="lbl">(unused in menu)</text>
+      <rect x="106" y="70" width="90" height="16" rx="8" fill="#2b3040" stroke="#3a4154"/>
+      <text x="151" y="82" text-anchor="middle" style="font-size:9px">LB</text>
+      <rect x="434" y="46" width="110" height="20" rx="10" fill="#2b3040" stroke="#3a4154"/>
+      <text x="489" y="60" text-anchor="middle" style="font-size:10px">RT</text>
+      <text x="489" y="36" text-anchor="middle" class="lbl">(unused in menu)</text>
+      <rect x="444" y="70" width="90" height="16" rx="8" fill="#2b3040" stroke="#3a4154"/>
+      <text x="489" y="82" text-anchor="middle" style="font-size:9px">RB</text>
+      <!-- select / start -->
+      <rect x="262" y="118" width="46" height="20" rx="10" fill="#3a2430" stroke="#ef4444"/>
+      <text x="285" y="132" text-anchor="middle" style="font-size:9px">SELECT</text>
+      <rect x="332" y="118" width="46" height="20" rx="10" fill="#3a2430" stroke="#ef4444"/>
+      <text x="355" y="132" text-anchor="middle" style="font-size:9px">START</text>
+      <text x="320" y="107" text-anchor="middle" class="lbl" style="fill:#ef4444">ALL-STOP &#8594; MENU</text>
+      <!-- LEFT STICK (Xbox position: upper left) -->
+      <circle cx="143" cy="163" r="30" fill="#2b3040" stroke="#3a4154"/>
+      <circle cx="143" cy="163" r="17" fill="#323848" stroke="#4a5168"/>
+      <text x="143" y="110" text-anchor="middle" class="lbl">(unused in menu)</text>
+      <!-- ABXY (upper right) -->
+      <circle cx="497" cy="134" r="15" fill="#2b3040" stroke="#e6c65c"/>
+      <text x="497" y="139" text-anchor="middle" style="fill:#e6c65c">Y</text>
+      <text x="497" y="110" text-anchor="middle" class="lbl">MAZE</text>
+      <circle cx="463" cy="166" r="15" fill="#2b3040" stroke="#7cc4ff"/>
+      <text x="463" y="171" text-anchor="middle" style="fill:#7cc4ff">X</text>
+      <text x="424" y="170" text-anchor="end" class="lbl">SUMO</text>
+      <circle cx="531" cy="166" r="15" fill="#2b3040" stroke="#ff8fa3"/>
+      <text x="531" y="171" text-anchor="middle" style="fill:#ff8fa3">B</text>
+      <text x="554" y="170" class="lbl">LINE FOLLOWER</text>
+      <circle cx="497" cy="198" r="15" fill="#2b3040" stroke="#7ce38b"/>
+      <text x="497" y="203" text-anchor="middle" style="fill:#7ce38b">A</text>
+      <text x="497" y="232" text-anchor="middle" class="lbl">MANUAL mode</text>
+      <!-- D-PAD (Xbox position: lower middle-left) -->
+      <g stroke="#3a4154" fill="#2b3040">
+        <rect x="237" y="186" width="26" height="72" rx="6"/>
+        <rect x="214" y="209" width="72" height="26" rx="6"/>
+      </g>
+      <text x="250" y="178" text-anchor="middle" class="lbl">&#9650; SMASH TOWER</text>
+      <text x="250" y="292" text-anchor="middle" class="lbl" style="fill:#6b7285">other directions free</text>
+      <!-- RIGHT STICK (Xbox position: lower middle-right) -->
+      <circle cx="390" cy="222" r="30" fill="#2b3040" stroke="#3a4154"/>
+      <circle cx="390" cy="222" r="17" fill="#323848" stroke="#4a5168"/>
+      <text x="390" y="272" text-anchor="middle" class="lbl">(unused in menu)</text>
+    </svg>
+  </div>
+
+  <h2><span class="sw led-green"></span>Controller map &#183; MANUAL</h2>
+  <div class="card padwrap">
+    <svg viewBox="0 0 640 330" width="100%" style="max-width:640px">
+      <path d="M120 90 Q90 88 68 108 Q30 146 24 220 Q20 272 52 284 Q84 296 116 250
+               Q136 222 168 222 L472 222 Q504 222 524 250 Q556 296 588 284
+               Q620 272 616 220 Q610 146 572 108 Q550 88 520 90 Z"
+            fill="#232734" stroke="#3a4154" stroke-width="2"/>
+      <!-- triggers / bumpers -->
       <rect x="96" y="46" width="110" height="20" rx="10" fill="#3a2430" stroke="#6b3a4d"/>
       <text x="151" y="60" text-anchor="middle" style="font-size:10px">LT</text>
       <text x="151" y="36" text-anchor="middle" class="lbl">jog paddle fwd (hold)</text>
@@ -202,45 +256,43 @@
       <rect x="332" y="118" width="46" height="20" rx="10" fill="#3a2430" stroke="#ef4444"/>
       <text x="355" y="132" text-anchor="middle" style="font-size:9px">START</text>
       <text x="320" y="107" text-anchor="middle" class="lbl" style="fill:#ef4444">ALL-STOP &#8594; MENU</text>
-      <!-- dpad -->
-      <g stroke="#3a4154" fill="#2b3040">
-        <rect x="130" y="128" width="26" height="72" rx="6"/>
-        <rect x="107" y="151" width="72" height="26" rx="6"/>
-      </g>
-      <text x="143" y="110" text-anchor="middle" class="lbl">tower smash (menu)</text>
-      <text x="143" y="122" text-anchor="middle" class="lbl">100 cm fwd (manual)</text>
-      <text x="86" y="168" text-anchor="end" class="lbl">90&deg; L</text>
-      <text x="200" y="168" class="lbl">90&deg; R</text>
-      <text x="143" y="216" text-anchor="middle" class="lbl">180&deg;</text>
-      <!-- abxy -->
-      <circle cx="497" cy="134" r="15" fill="#2b3040" stroke="#4a5168"/>
+      <!-- LEFT STICK (Xbox position: upper left) -->
+      <circle cx="143" cy="163" r="30" fill="#2b3040" stroke="#3a4154"/>
+      <circle cx="143" cy="163" r="17" fill="#323848" stroke="#4a5168"/>
+      <text x="143" y="110" text-anchor="middle" class="lbl">throttle &#8593;&#8595;</text>
+      <!-- ABXY (upper right) -->
+      <circle cx="497" cy="134" r="15" fill="#2b3040" stroke="#e6c65c"/>
       <text x="497" y="139" text-anchor="middle" style="fill:#e6c65c">Y</text>
-      <text x="497" y="110" text-anchor="middle" class="lbl">maze (menu)</text>
+      <text x="497" y="110" text-anchor="middle" class="lbl">(unused)</text>
       <circle cx="463" cy="166" r="15" fill="#2b3040" stroke="#7cc4ff"/>
       <text x="463" y="171" text-anchor="middle" style="fill:#7cc4ff">X</text>
-      <text x="424" y="162" text-anchor="end" class="lbl">sumo (menu)</text>
-      <text x="424" y="176" text-anchor="end" class="lbl">reverse (manual)</text>
+      <text x="424" y="170" text-anchor="end" class="lbl">REVERSE toggle</text>
       <circle cx="531" cy="166" r="15" fill="#2b3040" stroke="#ff8fa3"/>
       <text x="531" y="171" text-anchor="middle" style="fill:#ff8fa3">B</text>
-      <text x="554" y="162" class="lbl">line (menu)</text>
-      <text x="554" y="176" class="lbl">turbo (manual)</text>
+      <text x="554" y="170" class="lbl">TURBO toggle</text>
       <circle cx="497" cy="198" r="15" fill="#2b3040" stroke="#7ce38b"/>
       <text x="497" y="203" text-anchor="middle" style="fill:#7ce38b">A</text>
-      <text x="497" y="232" text-anchor="middle" class="lbl">manual</text>
-      <!-- sticks -->
-      <circle cx="232" cy="222" r="30" fill="#2b3040" stroke="#3a4154"/>
-      <circle cx="232" cy="222" r="17" fill="#323848" stroke="#4a5168"/>
-      <text x="232" y="272" text-anchor="middle" class="lbl">throttle &#8593;&#8595;</text>
-      <circle cx="408" cy="222" r="30" fill="#2b3040" stroke="#3a4154"/>
-      <circle cx="408" cy="222" r="17" fill="#323848" stroke="#4a5168"/>
-      <text x="408" y="272" text-anchor="middle" class="lbl">steer &#8592;&#8594;</text>
+      <text x="497" y="232" text-anchor="middle" class="lbl">(unused)</text>
+      <!-- D-PAD (Xbox position: lower middle-left) -->
+      <g stroke="#3a4154" fill="#2b3040">
+        <rect x="237" y="186" width="26" height="72" rx="6"/>
+        <rect x="214" y="209" width="72" height="26" rx="6"/>
+      </g>
+      <text x="250" y="178" text-anchor="middle" class="lbl">&#9650; 100 cm fwd</text>
+      <text x="208" y="226" text-anchor="end" class="lbl">90&#176; L</text>
+      <text x="292" y="226" class="lbl">90&#176; R</text>
+      <text x="250" y="276" text-anchor="middle" class="lbl">&#9660; 180&#176;</text>
+      <!-- RIGHT STICK (Xbox position: lower middle-right) -->
+      <circle cx="390" cy="222" r="30" fill="#2b3040" stroke="#3a4154"/>
+      <circle cx="390" cy="222" r="17" fill="#323848" stroke="#4a5168"/>
+      <text x="390" y="272" text-anchor="middle" class="lbl">steer &#8592;&#8594;</text>
     </svg>
   </div>
 
   <div class="foot">
     Confirmed indices (button spy + servo-test logs): A=0 · B=1 · X=2 · Y=3 · LT=6 · RT=7 · SELECT=8 · START=9 · D-pad 12/13/14/15.
     Line follower = line_track.py (simple, no calibration). Standalone test scripts (run any challenge file directly) skip the menu and use the blue armed light.
-    Logs on the robot's flash: main_log.txt (supervisor) · sumo_log.txt · line_log.txt · maze_log.txt · tower_log.txt.
+    All programs log to ONE file on the robot's flash: <b>LOG.TXT</b> — every line is stamped [seconds-since-power-on][PROGRAM], so a whole test session reads as one timeline. Copy the whole file out for debugging; it auto-rotates at 300 KB. (Old main_log/sumo_log/line_log files can be deleted.)
   </div>
 
 </div>

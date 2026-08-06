@@ -209,7 +209,7 @@ LOW_BATT_V = 1.15 * BATT_CELLS
 
 # Logging
 LOG_TO_FILE = True
-LOG_PATH = "main_log.txt"
+LOG_PATH = "LOG.TXT"           # unified log — every program appends here
 
 # ------------------------------- LOGGING ---------------------------------
 
@@ -223,8 +223,10 @@ def battery_voltage():
         return -1.0
 
 def log(msg):
-    t = time.ticks_diff(time.ticks_ms(), _BOOT_MS) / 1000
-    line = "[%8.2fs] %s" % (t, msg)
+    t = time.ticks_ms() / 1000.0    # seconds since POWER-ON —
+    #     the same clock in every program, so LOG.TXT reads as
+    #     one continuous session timeline
+    line = "[%9.2fs][MAIN ] %s" % (t, msg)
     print(line)
     if LOG_TO_FILE:
         try:

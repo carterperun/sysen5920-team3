@@ -1,18 +1,23 @@
 """
 tower_smash_auto.py — SYSEN 5920 Team 3
-XRP Proving Ground: "AUTO SMASH TOWER" — v2.0 (ram + clearing sweeps)
+XRP Proving Ground: "AUTO SMASH TOWER" — v2.1 (ram + locked spin)
 
-v2.0 REWRITE (8/6, per driver request): the standoff-hammer plan is
-retired — this is now a basic RAM script:
+v2.1 (8/6 field test: "initial impact good, drove forward way too
+much"): the charge is now measured distance + 5cm (was +20), and the
+back-up + three out-and-back sweeps are replaced with a LOCKED SPIN —
+the IMU yaw is recorded at the end of the charge, the robot spins in
+place for ~3 seconds to flatten/scatter anything still standing, then
+turns back to the recorded heading. (The logs also show the old +20
+charge grinding a stall at 71cm with battery sag to 4.0V — the short
+charge ends before that.)
 
+v2.0 sequence:
   1. Robot is manually pointed at the tower. On launch it RANGES the
      tower with the ultrasonic (median of several pings).
-  2. Drives that measured distance + SMASH_EXTRA_CM (20cm) at HIGH
-     SPEED — straight through the blocks, IMU heading hold.
-  3. Backs up 10cm — that puts it roughly where the tower stood.
-  4. Clearing sweeps, three times over: spin 90 degrees, drive 20cm
-     forward, back up 20cm. Any bricks still standing near the tower
-     spot get knocked over or pushed clear.
+  2. Drives that measured distance + SMASH_EXTRA_CM at HIGH SPEED —
+     straight through the blocks, IMU heading hold.
+  3. (v2.1) Locks the IMU heading and spins in place ~3s, then
+     re-faces the recorded heading.
 
 Launch: from the main_code MENU press D-PAD UP — that press IS the
 start. START (or any all-stop) aborts at any moment; every loop here
@@ -40,20 +45,18 @@ ROBOT_NAME = "T3amThr3"     # standalone only
 START_BUTTON = 0            # standalone only ("A")
 
 # The ram
-SMASH_EXTRA_CM = 20.0       # drive the measured distance PLUS this
+SMASH_EXTRA_CM = 5.0        # v2.1: drive the measured distance PLUS
+                            # this (20 was way too far)
 SMASH_EFFORT = 0.9          # high speed — this is a smash
 SMASH_MAX_CM = 120.0        # sanity cap: refuse a longer charge even if
                             # the echo says so (bad ping = bad plan)
 SMASH_MIN_CM = 5.0          # echo closer than this = something's wrong
 RANGE_MAX_CM = 100.0        # echo farther than this (or 65535 timeout)
                             # = no tower seen -> abort with red LED
-BACK_TO_TOWER_CM = 10.0     # reverse after the ram = tower spot
 
-# The clearing sweeps
-SWEEP_COUNT = 3
-SWEEP_TURN_DEG = 90         # LEFT 90 each time (270 total)
-SWEEP_FWD_CM = 20.0
-SWEEP_EFFORT = 0.7
+# The locked spin (v2.1 — replaces the out-and-back sweeps)
+SPIN_S = 3.0                # spin in place this long after the charge
+SPIN_EFFORT = 0.8
 BACKUP_EFFORT = 0.7         # reverse needs more than forward (proven)
 
 # Motion plumbing (matches the tuned values in sumo/main_code)
@@ -73,7 +76,7 @@ LOW_BATT_V = 1.15 * BATT_CELLS
 
 # Logging (black-box scheme shared with sumo/line)
 LOG_TO_FILE = True
-LOG_PATH = "tower_log.txt"
+LOG_PATH = "LOG.TXT"           # unified log — every program appends here
 HEARTBEAT_S = 0.5
 
 # ------------------------------- LOGGING ---------------------------------
@@ -89,8 +92,10 @@ def battery_voltage():
         return -1.0
 
 def log(msg, console=True):
-    t = time.ticks_diff(time.ticks_ms(), _BOOT_MS) / 1000
-    line = "[%8.2fs] %s" % (t, msg)
+    t = time.ticks_ms() / 1000.0    # seconds since POWER-ON —
+    #     the same clock in every program, so LOG.TXT reads as
+    #     one continuous session timeline
+    line = "[%9.2fs][TOWER] %s" % (t, msg)
     if console:
         print(line)
     if LOG_TO_FILE:
@@ -106,7 +111,7 @@ def log(msg, console=True):
 def _rotate_log():
     try:
         import os
-        if os.stat(LOG_PATH)[6] > 200 * 1024:
+        if os.stat(LOG_PATH)[6] > 300 * 1024:
             os.remove(LOG_PATH)
             print("tower log rotated")
     except Exception:
@@ -246,8 +251,37 @@ def drive_straight(dist_cm, effort, tag, timeout_s=None):
 
 # -------------------------------- THE RUN --------------------------------
 
+def locked_spin():
+    """v2.1: record the IMU heading, spin in place for SPIN_S seconds
+    (alternating fore/aft bias keeps net translation ~zero), then turn
+    back to the recorded heading."""
+    yaw0 = imu.get_yaw()
+    log("spin: yaw locked at %+.1f — spinning in place %.1fs at %.2f"
+        % (yaw0, SPIN_S, SPIN_EFFORT))
+    t0 = time.ticks_ms()
+    phase_ms = t0
+    bias = WIGGLE_BIAS
+    try:
+        while time.ticks_diff(time.ticks_ms(), t0) < SPIN_S * 1000:
+            _abort()
+            now = time.ticks_ms()
+            if time.ticks_diff(now, phase_ms) >= WIGGLE_PERIOD_S * 1000:
+                phase_ms = now
+                bias = -bias
+            # spin LEFT: boost BOTH wheel magnitudes (left-turn weak
+            # side) — boosting one side would creep the robot forward
+            mag = min(0.95, SPIN_EFFORT * LEFT_TURN_BOOST)
+            drivetrain.set_effort(-mag + bias, mag + bias)
+            time.sleep(0.01)
+    finally:
+        drivetrain.stop()
+    turned = imu.get_yaw() - yaw0
+    log("spin: done, turned %+.0f deg total — re-facing locked heading"
+        % turned)
+    verified_turn(normalize(yaw0 - imu.get_yaw()))
+
 def smash_tower():
-    """Range, ram, back off, three 90-degree clearing sweeps."""
+    """Range, ram to echo+5cm, then the locked 3-second spin."""
     d = front_distance()
     log("range: tower echo = %.1fcm" % d)
     if d < SMASH_MIN_CM or d > RANGE_MAX_CM:
@@ -263,16 +297,7 @@ def smash_tower():
         % (charge, d, SMASH_EXTRA_CM, SMASH_EFFORT))
     drive_straight(charge, SMASH_EFFORT, "smash")
 
-    log("back up %.0fcm to the tower spot" % BACK_TO_TOWER_CM)
-    drive_straight(-BACK_TO_TOWER_CM, BACKUP_EFFORT, "back")
-
-    for i in range(SWEEP_COUNT):
-        _abort()
-        log("clear %d/%d: LEFT %d deg, out %.0fcm and back"
-            % (i + 1, SWEEP_COUNT, SWEEP_TURN_DEG, SWEEP_FWD_CM))
-        verified_turn(SWEEP_TURN_DEG)
-        out = drive_straight(SWEEP_FWD_CM, SWEEP_EFFORT, "clear%d" % (i + 1))
-        drive_straight(-out, BACKUP_EFFORT, "clear%d-back" % (i + 1))
+    locked_spin()
     return True
 
 def run(sv=None):
@@ -281,11 +306,10 @@ def run(sv=None):
     if sv is not None:
         _HOOKS["abort"] = sv.check_abort
     _rotate_log()
-    log("===== TOWER SMASH v2.0 launch: batt=%.2fV yaw=%+.1f"
+    log("===== TOWER SMASH v2.1 launch: batt=%.2fV yaw=%+.1f"
         % (battery_voltage(), imu.get_yaw()))
-    log("config: extra=%.0fcm smash=%.2f sweeps=%dx%ddeg/%.0fcm "
-        "backup=%.2f" % (SMASH_EXTRA_CM, SMASH_EFFORT, SWEEP_COUNT,
-                         SWEEP_TURN_DEG, SWEEP_FWD_CM, BACKUP_EFFORT))
+    log("config: extra=%.0fcm smash=%.2f spin=%.1fs at %.2f"
+        % (SMASH_EXTRA_CM, SMASH_EFFORT, SPIN_S, SPIN_EFFORT))
     if battery_voltage() < LOW_BATT_V:
         log("*** WARNING: battery LOW at launch (%.2fV) ***"
             % battery_voltage())
@@ -310,7 +334,7 @@ def run(sv=None):
 def _standalone():
     from pestolink import PestoLinkAgent
     pestolink = PestoLinkAgent(ROBOT_NAME)
-    log("=========== BOOT: tower_smash_auto v2.0 (standalone) batt=%.2fV"
+    log("=========== BOOT: tower_smash_auto v2.1 (standalone) batt=%.2fV"
         % battery_voltage())
     board.led_on()
     set_status(255, 120, 0)

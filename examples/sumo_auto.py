@@ -1,6 +1,21 @@
 """
 sumo_auto.py — SYSEN 5920 Team 3
-XRP Proving Ground: "Sumo" challenge (autonomous attempt) — v4.11
+XRP Proving Ground: "Sumo" challenge (autonomous attempt) — v4.13
+
+v4.13 (8/6 night logs — "kept crossing out of the ring"): the BLUE
+PAINTER'S TAPE only reads ~0.07 below the floor (0.88-0.90 vs 0.96),
+so the old LINE_DELTA=0.20 could never trip — the robot literally
+could not see the ring boundary. LINE_DELTA is now 0.05 (debounce 3).
+The finish sweep is DISABLED per driver request: on any line trip the
+robot only backs up and turns away — it never drives forward past the
+line again. Approach effort 0.55 -> 0.65 (still limping at 4.5V sag).
+
+v4.12 (8/6 field logs): stall watch in every watched drive (no progress
+1.2s -> effort boost; 3.5s -> give up and regroup — the logged approach
+sat frozen at 2.4cm for 10+ seconds), one boosted retry when a backup
+stalls below half its distance, and a loud diagnostic when the survey
+never sees ANY reflectance change (the logged leg 1 drove 48cm with the
+sensors frozen at 0.965 — that's a sensor/setup problem, not tuning).
 
 v4.11: SURVEY + GEO-FENCE — the robot keeps leaving the circle, so now
 it MEASURES the circle first and then refuses to drive out of it:
@@ -158,13 +173,17 @@ SLIP_CHECK = True
 # The floor baseline is AUTO-SAMPLED at launch (robot starts at ring
 # center, guaranteed off the tape). A sensor trips when it moves away
 # from its own floor baseline by more than LINE_DELTA.
-LINE_DELTA = 0.20           # deviation from floor baseline = tape
-LINE_POLARITY = "lighter"   # LOCKED from the logs: floor reads ~0.7,
-                            # tape trips read ~0.05 — the ring tape is
-                            # much LIGHTER than the floor. Locking the
-                            # polarity stops dark spots/shadows on the
-                            # floor from ever tripping the detector.
-LINE_DEBOUNCE = 2           # consecutive reads needed to trip (~20ms)
+LINE_DELTA = 0.05           # v4.13: THE BLUE PAINTER'S TAPE ONLY READS
+                            # ~0.07 BELOW THE FLOOR (0.88-0.90 vs 0.96
+                            # in the 8/6 night logs) — the old 0.20 was
+                            # physically impossible to trip, which is
+                            # exactly why the robot kept driving out of
+                            # the ring. 0.05 trips on the real tape.
+LINE_POLARITY = "lighter"   # tape reads LOWER than the floor baseline
+LINE_DEBOUNCE = 3           # v4.13: 3 consecutive reads (~30ms) — the
+                            # tighter delta needs one more sample of
+                            # noise immunity; tape is 3.65cm wide, so
+                            # even at push speed it's seen for >100ms
 
 # Motion — v3.4: doubled efforts (v3.3) outran the line detector, so
 # efforts are now original + 0.1. ALSO fixed the real problem: the slip
@@ -181,8 +200,8 @@ LINE_DEBOUNCE = 2           # consecutive reads needed to trip (~20ms)
 # keeper from v4.3 is a slightly stronger backup (the logged backups
 # stalled at -2cm of -12), and the turn-PID tolerance fix (see
 # _turn_pid) which addresses the real turning problem.
-APPROACH_EFFORT = 0.55      # v4.10: 0.45 approaches were crawling/
-                            # freezing under battery sag
+APPROACH_EFFORT = 0.65      # v4.13: 0.55 still limped at 4.5V sag (the
+                            # survey leg crawled 5cm in 15 seconds)
 PUSH_EFFORT = 0.7           # v4.9: raised again (0.45 -> 0.6 -> 0.7),
                             # pushes were still slow under block+floor
                             # friction. Line check runs every ~10ms
@@ -202,6 +221,12 @@ MIN_EFFORT = 0.4            # no wheel / no PID output ever weaker than this
 #   1. back up SWEEP_BACK_CM      2. turn LEFT 45, push to the line
 #   3. back up again              4. turn RIGHT 90 (net 45 right of the
 #      original heading), push to the line once more
+# v4.13: FINISH SWEEP DISABLED (driver request: after seeing the line,
+# ONLY back up and turn — never drive forward past it again). The
+# angled follow-up touches drive back toward the line, which with the
+# faint blue tape risked missed trips; the straight push to the line
+# already carries the block onto/over it.
+FINISH_SWEEP = False
 SWEEP_BACK_CM = 10.0        # backup before each angled touch
 SWEEP_ANGLE_DEG = 45        # first sweep angle (left), then 90 right
 SWEEP_OVERDRIVE_CM = 2.0    # sensors may pass the nominal line position
@@ -302,7 +327,7 @@ SAG_BATT_V = 1.05 * BATT_CELLS      # 4.2V under load: brownout territory
 
 # Logging
 LOG_TO_FILE = True
-LOG_PATH = "sumo_log.txt"
+LOG_PATH = "LOG.TXT"           # unified log — every program appends here
 HEARTBEAT_S = 0.5           # heartbeat period inside drive loops
 
 # ------------------------------- LOGGING ---------------------------------
@@ -323,8 +348,10 @@ def log(msg, console=True):
     console blocks ~1s per print, which slowed the control loop to ~1Hz
     and let the robot cross the ring tape between line checks (the
     drive-out-of-the-ring failure)."""
-    t = time.ticks_diff(time.ticks_ms(), _BOOT_MS) / 1000
-    line = "[%8.2fs] %s" % (t, msg)
+    t = time.ticks_ms() / 1000.0    # seconds since POWER-ON —
+    #     the same clock in every program, so LOG.TXT reads as
+    #     one continuous session timeline
+    line = "[%9.2fs][SUMO ] %s" % (t, msg)
     if console:
         print(line)
     if LOG_TO_FILE:
@@ -406,7 +433,8 @@ def line_values():
     return reflectance.get_left(), reflectance.get_right()
 
 # Per-sensor floor baseline, sampled at launch while parked at ring center.
-FLOOR = {"l": 0.5, "r": 0.5, "hits": 0}
+# "lo" = lowest reading seen anywhere in the run (v4.12 diagnostics).
+FLOOR = {"l": 0.5, "r": 0.5, "hits": 0, "lo": 1.0}
 
 def capture_floor_baseline():
     l = r = 0.0
@@ -432,6 +460,9 @@ def line_detected():
     """Tape = a sensor deviating from its own floor baseline, debounced
     over LINE_DEBOUNCE consecutive calls so one noisy read can't trip."""
     l, r = line_values()
+    lo = l if l < r else r
+    if lo < FLOOR["lo"]:
+        FLOOR["lo"] = lo         # v4.12: low-water mark for diagnostics
     if _deviates(l, FLOOR["l"]) or _deviates(r, FLOOR["r"]):
         FLOOR["hits"] += 1
     else:
@@ -531,13 +562,33 @@ def bounded_backup(dist_cm, effort=BACKUP_EFFORT, timeout=3, tag="backup"):
             % (tag, dist_cm, d))
     if d < 0.5:
         return 0.0
-    return -straight_tracked(-d, effort, timeout=timeout)
+    backed = -straight_tracked(-d, effort, timeout=timeout)
+    # v4.12: reverse stalls are chronic (logged -1.5cm of -12 even at
+    # 0.70) — one louder retry for the remainder before accepting it
+    if backed < d * 0.5:
+        boost = min(0.9, effort + 0.15)
+        log("%s: stalled at %.1f of %.1fcm — retrying remainder at %.2f"
+            % (tag, backed, d, boost))
+        backed += -straight_tracked(-(d - backed), boost, timeout=timeout)
+    return backed
+
+# Stall handling inside watched drives (v4.12): the logged approaches
+# froze at 2.4cm for 10+ seconds under battery sag while the loop
+# happily commanded 0.55 forever. Now: no progress for STALL_BOOST_S
+# raises the effort a notch; still no progress by STALL_GIVEUP_S ends
+# the drive with outcome "stall" so the caller can regroup.
+STALL_MIN_CM = 0.5
+STALL_BOOST_S = 1.2
+STALL_BOOST_ADD = 0.15
+STALL_EFFORT_MAX = 0.85
+STALL_GIVEUP_S = 3.5
 
 def drive_watching(effort, stop_check, max_cm, hold_yaw=None, tag="drive"):
     """Drive forward until stop_check() returns a reason, the tape shows
-    up ('line'), or max_cm is hit ('cap'). IMU heading hold keeps pushes
-    straight. Logs a heartbeat ~2/s so the log shows what the sensors saw
-    right up to the moment anything stopped."""
+    up ('line'), max_cm is hit ('cap'), or progress dies ('stall').
+    IMU heading hold keeps pushes straight. Logs a heartbeat ~2/s so the
+    log shows what the sensors saw right up to the moment anything
+    stopped."""
     start_l = drivetrain.get_left_encoder_position()
     start_r = drivetrain.get_right_encoder_position()
     last_beat = time.ticks_ms()
@@ -545,6 +596,9 @@ def drive_watching(effort, stop_check, max_cm, hold_yaw=None, tag="drive"):
     result = "cap"
     FLOOR["hits"] = 0        # a stale debounce count from the previous
                              # trip must not instantly re-trip this drive
+    prog_ms = time.ticks_ms()
+    prog_cm = 0.0
+    boosted = False
     while True:
         _abort()                 # START stays live during every drive
         # LINE CHECK EVERY PASS — reflectance reads are microseconds, so
@@ -568,18 +622,42 @@ def drive_watching(effort, stop_check, max_cm, hold_yaw=None, tag="drive"):
                 % (tag, reason, traveled_since(start_l, start_r)))
             result = reason
             break
-        if traveled_since(start_l, start_r) > max_cm:
+        trav = traveled_since(start_l, start_r)
+        if trav > max_cm:
             log("%s: cap %.1fcm reached" % (tag, max_cm))
             break
+        # ---- stall watch (v4.12) ----
+        now = time.ticks_ms()
+        if trav - prog_cm >= STALL_MIN_CM:
+            prog_cm = trav
+            prog_ms = now
+            if boosted:
+                boosted = False
+                log("%s: moving again — boost off" % tag, console=False)
+        stalled_ms = time.ticks_diff(now, prog_ms)
+        if stalled_ms > STALL_GIVEUP_S * 1000:
+            log("%s: STALLED at %.1fcm for %.1fs (batt=%.2fV) — "
+                "giving up this drive"
+                % (tag, trav, stalled_ms / 1000, battery_voltage()))
+            result = "stall"
+            break
+        eff = effort
+        if stalled_ms > STALL_BOOST_S * 1000:
+            eff = min(STALL_EFFORT_MAX, effort + STALL_BOOST_ADD)
+            if not boosted:
+                boosted = True
+                log("%s: no progress %.1fs at %.1fcm — boosting %.2f "
+                    "-> %.2f" % (tag, stalled_ms / 1000, trav,
+                                 effort, eff))
         if hold_yaw is not None:
             err = normalize(hold_yaw - imu.get_yaw())
             corr = max(-PUSH_CORR_MAX, min(PUSH_CORR_MAX, PUSH_KP * err))
             # stiction floor: heading corrections speed the fast wheel
             # up rather than slowing the slow wheel into the dead zone
-            drivetrain.set_effort(max(MIN_EFFORT, effort - corr),
-                                  max(MIN_EFFORT, effort + corr))
+            drivetrain.set_effort(max(MIN_EFFORT, eff - corr),
+                                  max(MIN_EFFORT, eff + corr))
         else:
-            drivetrain.set_effort(effort, effort)
+            drivetrain.set_effort(eff, eff)
         now = time.ticks_ms()
         if time.ticks_diff(now, last_beat) >= HEARTBEAT_S * 1000:
             last_beat = now
@@ -624,6 +702,18 @@ def survey_ring():
     if out != "line":
         log("survey: no line on leg 1 (%s) — using tape-measured "
             "geometry instead" % out)
+        # v4.12 diagnostic: the 8/6 logs show leg 1 driving 48cm with
+        # the reflectance frozen at 0.965-0.966 the whole way. If the
+        # lowest reading of the leg never left the floor baseline, the
+        # sensors never saw ANY tape — that's a setup problem, not a
+        # tuning problem.
+        base_lo = FLOOR["l"] if FLOOR["l"] < FLOOR["r"] else FLOOR["r"]
+        if FLOOR["lo"] > base_lo - 0.1:
+            log("*** reflectance never changed the whole leg (lowest "
+                "%.3f vs floor %.3f). Either the robot is NOT inside "
+                "the ring, or the line sensors aren't seeing the floor "
+                "(height should be ~3-5mm, nothing blocking them). ***"
+                % (FLOOR["lo"], base_lo))
         go_home()
         return False
     ax, ay = POSE["x"], POSE["y"]
@@ -826,6 +916,10 @@ def push_out_one_block(cycle):
         log("approach: no contact where the echo was — rescanning")
         go_home()
         return True
+    if outcome == "stall":
+        log("approach: drive died even boosted — regrouping")
+        go_home()
+        return True
 
     push_yaw = imu.get_yaw()
     log("push: contact made, pushing along yaw %+.1f (fence %.1fcm)"
@@ -838,8 +932,17 @@ def push_out_one_block(cycle):
         log("push: block slipped off — regrouping")
         go_home()
         return True
+    if outcome == "stall" and \
+            dist_from_center() < RING["r"] - SENSOR_AHEAD_CM - 2.0:
+        # stalled mid-ring (immovable pile / wedged block) — regroup.
+        # A stall right AT the edge falls through to the boundary check
+        # below and still scores.
+        log("push: stalled mid-ring — regrouping")
+        bounded_backup(RETURN_CM, tag="return")
+        go_home()
+        return True
 
-    if outcome == "cap" and \
+    if outcome in ("cap", "stall") and \
             dist_from_center() >= RING["r"] - SENSOR_AHEAD_CM - 2.0:
         # Fence-stopped right at the ring edge: the block is over the
         # line even though the sensors never tripped (a block sitting
@@ -849,8 +952,13 @@ def push_out_one_block(cycle):
         outcome = "line"
 
     if outcome == "line":
-        finish_sweep()               # angled touches push the block out
-        log("cycle: SCORED — push + 3-touch sweep complete")
+        if FINISH_SWEEP:
+            finish_sweep()           # angled touches push the block out
+            log("cycle: SCORED — push + 3-touch sweep complete")
+        else:
+            # v4.13: line seen -> ONLY back up and turn away. Never
+            # drive forward past the line.
+            log("cycle: SCORED — block pushed to the line; backing off")
 
     bounded_backup(RETURN_CM, tag="return")
     go_home()
@@ -913,19 +1021,20 @@ def run(sv=None):
         RING["r"] = RING_RADIUS_CM
         RING["surveyed"] = False
         FLOOR["hits"] = 0
+        FLOOR["lo"] = 1.0
 
         pushes = 0
         start = time.ticks_ms()
         try:
             log("run start: batt=%.2fV yaw=%+.1f"
                 % (battery_voltage(), imu.get_yaw()))
-            log("config v4.11: appr=%.2f push=%.2f turn=%.2f backup=%.2f "
-                "ring=%.0fcm scan<%.0fcm contact<%.0fcm sweep=%d/%.0fcm "
-                "survey=%s fence=%.0fcm"
+            log("config v4.13: appr=%.2f push=%.2f turn=%.2f backup=%.2f "
+                "ring=%.0fcm scan<%.0fcm contact<%.0fcm linedelta=%.2f "
+                "deb=%d sweep=%s survey=%s fence=%.0fcm"
                 % (APPROACH_EFFORT, PUSH_EFFORT, TURN_EFFORT,
                    BACKUP_EFFORT, RING_RADIUS_CM, SCAN_MAX_CM,
-                   CONTACT_CM, SWEEP_ANGLE_DEG, SWEEP_BACK_CM,
-                   SURVEY, FENCE_MARGIN_CM))
+                   CONTACT_CM, LINE_DELTA, LINE_DEBOUNCE,
+                   FINISH_SWEEP, SURVEY, FENCE_MARGIN_CM))
             if battery_voltage() < LOW_BATT_V:
                 log("*** WARNING: battery LOW at launch (%.2fV, %d-cell) "
                     "***" % (battery_voltage(), BATT_CELLS))
@@ -964,7 +1073,7 @@ def _standalone():
     from pestolink import PestoLinkAgent
     log_selftest()                   # RED LED at boot = log file broken
     log("")
-    log("=========== BOOT: sumo_auto v4.11 (standalone) ====== batt=%.2fV"
+    log("=========== BOOT: sumo_auto v4.13 (standalone) ====== batt=%.2fV"
         % battery_voltage())
     if battery_voltage() < LOW_BATT_V:
         log("*** WARNING: battery LOW for a %d-cell pack (<%.1fV). "
