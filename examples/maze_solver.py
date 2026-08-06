@@ -1,14 +1,28 @@
 """
 maze_solver.py — SYSEN 5920 Team 3
-XRP Proving Ground: MAZE (right-wall follower) — v1.23
+XRP Proving Ground: MAZE (right-wall follower) — v1.25
 
-v1.23 (driver's field survey): GRID FRAME CORRECTED. The rover starts
-in the bottom-left cell with THREE cells on its LEFT and FIVE ahead —
-the code had the lateral cells on its RIGHT (START (0,0), maze to the
-east). That mirror meant every WEST check in the start column was
-skipped as EDGE-OF-MAZE when it physically held three open cells, and
-every EAST check pinged the outer boundary wall. START is now (3, 0),
-GOAL (3, 5): east = the outer edge, west = into the maze.
+v1.25 (driver: "way too fast now that we replaced batteries"):
+efforts down 0.2 — drive 0.5 -> 0.3, turn 0.75 -> 0.55 — and the
+stiction floor 0.4 -> 0.25 (the old floor was tuned on sagging packs
+and would have clamped the new cruise effort right back up). Stall
+boost still rescues a too-weak drive automatically.
+
+v1.24 (driver): three changes.
+  * GRID REVERTED to the original frame — the start is the BOTTOM-
+    RIGHT square of the 6-long x 4-high maze, five cells ahead and
+    three on the rover's RIGHT: START (0,0), GOAL (0,5), east = into
+    the maze, west = outer edge. (v1.23's mirror was based on a
+    bottom-left start that turned out wrong.)
+  * BEARING: software gyro-bias trim. The drift guard passes any
+    rate under 3 deg/s, but even 0.5 deg/s accumulates to 60 deg
+    over a two-minute run. The residual rate is measured over ~1.6s
+    at launch and subtracted from every yaw read (see yaw()).
+  * WALL STICKING: turns that rotate under 4 deg in a full second
+    bail out as PINNED immediately (~1s instead of the 3s timeout),
+    so the reverse-arc rescue fires before the corner grinds; the
+    unstick arc is bigger (3 -> 4.5cm) — repeat WEDGED lines in the
+    8/6 logs show 3cm wasn't clearing the wall.
 
 v1.22 (driver rule): RIGHT SIDE IS ALWAYS CHECKED FIRST. The goal-
 biased revisit ordering (3rd+ visit to a cell) was re-sorting ALL
@@ -276,17 +290,17 @@ START_BUTTON = 3            # standalone only. Y is button 3 on OUR pad
                             # the draft's "Y = 2" is the X button here.
 
 # Maze geometry. Coordinates are (column, row).
-# v1.23 (driver's field survey): the rover starts in the BOTTOM-LEFT
-# cell of the maze with THREE cells on its LEFT side and FIVE cells
-# ahead. Internally "north" = the rover's forward at launch and
-# "east" (+x) = the rover's RIGHT — so the start column is x=3 (the
-# right/east edge of the grid) and the three lateral cells are x=2,
-# 1, 0 to the WEST. The old START=(0,0) had this mirrored: WEST was
-# skipped as EDGE-OF-MAZE when it physically held three open cells.
+# v1.24 (driver correction): maze is 6 CELLS LONG x 4 CELLS HIGH and
+# the rover starts in the BOTTOM-RIGHT square facing down the long
+# axis — five cells ahead, three cells on its RIGHT-hand side.
+# Internally "north" = the rover's forward at launch and "east" (+x)
+# = the rover's right, so the lateral cells are x=1..3 to the EAST
+# and WEST is the outer edge. (This is the pre-v1.23 frame — v1.23's
+# mirror was based on a bottom-left start that turned out wrong.)
 GRID_WIDTH = 4
 GRID_HEIGHT = 6
-START = (3, 0)
-GOAL = (3, 5)
+START = (0, 0)
+GOAL = (0, 5)
 START_HEADING = 0           # 0 = north (robot placed facing the goal end)
 
 # Motion and sensor tuning.
@@ -295,9 +309,16 @@ CELL_DISTANCE_CM = 30.48   # v1.14 (driver): EXACTLY 12 inches per
                             # standoff stop still ends the drive early
                             # if a wall is closer, and the end-taper
                             # below stops it crisply on the mark.
-DRIVE_EFFORT = 0.5          # cell drives (the draft's 0.45 is below the
+DRIVE_EFFORT = 0.3          # v1.25 (driver): 0.5 -> 0.3 — fresh
+                            # batteries made 0.5 "way too fast".
+                            # (the draft's 0.45 is below the
                             # stiction floor once the PID tapers)
-MIN_EFFORT = 0.4            # per-wheel stiction floor (proven value)
+MIN_EFFORT = 0.25           # v1.25: 0.4 -> 0.25 — the 0.4 floor was
+                            # proven on SAGGING packs; on fresh cells
+                            # it would clamp the new 0.3 cruise right
+                            # back up and erase the end-of-drive
+                            # crawl taper. Stall boost still rescues
+                            # a too-weak drive automatically.
 WALL_DISTANCE_CM = 12.7     # v1.18 (driver rule): WALL only if within
                             # 5 INCHES of the sensor. With corrected
                             # odometry a true adjacent wall reads
@@ -359,7 +380,9 @@ DRIVE_STALL_MAX = 0.8
 # drops so momentum can't carry the robot past the mark between two
 # 10ms checks. Tolerances tightened to match the promised +-2 degree
 # placement accuracy.
-TURN_EFFORT = 0.75
+TURN_EFFORT = 0.55          # v1.25 (driver): 0.75 -> 0.55 with the
+                            # fresh pack — less momentum to coast
+                            # past the cardinal, less wall impact
 TURN_SLOW_ZONE_DEG = 25.0   # within this of the target -> slow down
 TURN_SLOW_FACTOR = 0.6      # slow-zone effort multiplier
 TURN_TOL_DEG = 2.5          # v1.3: 4.0 -> 2.5 (cells are square to
@@ -367,8 +390,10 @@ TURN_TOL_DEG = 2.5          # v1.3: 4.0 -> 2.5 (cells are square to
 TURN_RETRIES = 4            # v1.2: one more attempt (unstick eats one)
 TURN_STUCK_DEG = 8.0        # attempt moved less than this with lots
                             # left to go = physically pinned -> back up
-TURN_UNSTICK_CM = 3.0       # v1.5: 5 -> 3 (5 was reaching the wall
-                            # behind in the small cells)
+TURN_UNSTICK_CM = 4.5       # v1.24: 3 -> 4.5 — 3cm arcs weren't
+                            # clearing the wall (repeat WEDGED lines
+                            # in the 8/6 logs); the arc stalls safely
+                            # on the wall behind if the cell is tight
 WIGGLE_BIAS = 0.18
 WIGGLE_PERIOD_S = 0.22
 WIGGLE_TOL_DEG = 2.0        # v1.3: 3.0 -> 2.0
@@ -405,6 +430,32 @@ DIRECTIONS = (
     (0, -1),   # south
     (-1, 0),   # west
 )
+
+# v1.24 (driver: "bearing still inaccurate on occasion"): SOFTWARE
+# GYRO-BIAS TRIM. The launch drift guard PASSES anything under
+# 3 deg/s — but even a passing 0.5 deg/s accumulates to 60 deg over a
+# two-minute run, slewing every cardinal target. The residual rate is
+# now measured precisely at launch and subtracted from every yaw read
+# for the rest of the run.
+DRIFT_COMP = {"dps": 0.0, "t0": 0}
+
+def yaw():
+    """imu.get_yaw() with the launch-measured residual gyro bias
+    subtracted (linear in time). Every heading decision in this file
+    reads yaw through here."""
+    y = imu.get_yaw()
+    if DRIFT_COMP["dps"]:
+        y -= DRIFT_COMP["dps"] * time.ticks_diff(
+            time.ticks_ms(), DRIFT_COMP["t0"]) / 1000.0
+    return y
+
+def _set_drift_comp(rate):
+    DRIFT_COMP["dps"] = rate
+    DRIFT_COMP["t0"] = time.ticks_ms()
+    if abs(rate) >= 0.05:
+        log("bearing: compensating %+.2f deg/s residual gyro bias in "
+            "software (%.0f deg over a 2-min run left uncorrected)"
+            % (rate, abs(rate) * 120))
 
 # ------------------------------- LOGGING ---------------------------------
 
@@ -547,21 +598,35 @@ def wiggle_turn(degrees, effort=TURN_EFFORT, timeout_s=None):
     alternating fore/aft bias keeps both wheels breaking static
     friction so the robot spins IN PLACE (a slight shimmy) instead of
     arcing wide around one stalled wheel. True = reached."""
-    target = imu.get_yaw() + degrees
+    target = yaw() + degrees
     if timeout_s is None:
         timeout_s = 1.5 + abs(degrees) / 90.0 * 2.0
     t0 = time.ticks_ms()
     phase_ms = t0
     bias = WIGGLE_BIAS
+    mark_yaw = yaw()
+    mark_ms = t0
     try:
         while True:
             _abort()
-            err = normalize(target - imu.get_yaw())
+            err = normalize(target - yaw())
             if abs(err) <= WIGGLE_TOL_DEG:
                 return True
             now = time.ticks_ms()
             if time.ticks_diff(now, t0) > timeout_s * 1000:
                 log("turn: wiggle timeout, %.0f deg short" % err)
+                return False
+            # v1.24 (driver: "gets stuck on the walls"): PINNED
+            # detection — under 4 deg of rotation in a full second
+            # means a corner is riding a wall. Bail out NOW so the
+            # reverse-arc rescue fires after ~1s of grinding instead
+            # of the full 3s timeout.
+            if abs(yaw() - mark_yaw) >= 4:
+                mark_yaw = yaw()
+                mark_ms = now
+            elif time.ticks_diff(now, mark_ms) > 1000:
+                log("turn: PINNED (%.0f deg in 1.0s) — bailing early "
+                    "for the unstick arc" % abs(yaw() - mark_yaw))
                 return False
             if time.ticks_diff(now, phase_ms) >= WIGGLE_PERIOD_S * 1000:
                 phase_ms = now
@@ -594,7 +659,7 @@ CPOSE = {"x": 0.0, "y": 0.0}
 SCAN_START = {"x": 0.0, "y": 0.0}
 
 def _cpose_move(dist_cm):
-    rad = math.radians(imu.get_yaw())
+    rad = math.radians(yaw())
     CPOSE["x"] += dist_cm * math.cos(rad)
     CPOSE["y"] += dist_cm * math.sin(rad)
 
@@ -634,17 +699,17 @@ def wait_rotation_stop(timeout_s=1.2):
     at motor-stop, the robot kept spinning on momentum) — that coast
     is the physical over-rotation the driver sees. Returns the total
     coast in degrees."""
-    y_start = imu.get_yaw()
+    y_start = yaw()
     last = y_start
     t0 = time.ticks_ms()
     while time.ticks_diff(time.ticks_ms(), t0) < timeout_s * 1000:
         _abort()
         time.sleep(0.08)
-        y = imu.get_yaw()
+        y = yaw()
         if abs(y - last) < 0.4:          # <5 deg/s = stopped
             break
         last = y
-    return imu.get_yaw() - y_start
+    return yaw() - y_start
 
 def turn_to_heading_idx(heading, why):
     """Turn to a cardinal direction's ABSOLUTE yaw target, verify with
@@ -653,14 +718,14 @@ def turn_to_heading_idx(heading, why):
     retry the same cardinal target (alignment is re-aimed, never
     accumulated). Logs commanded vs achieved."""
     target = heading_yaw(heading)
-    before = imu.get_yaw()
+    before = yaw()
     first = normalize(target - before)
     if abs(first) > 135:
         # v1.8: a near-180 in a tight cell needs the most swing room —
         # do it as a deliberate three-point turn: half the rotation,
         # reverse-arc, then finish via the normal verified loop.
         wiggle_turn(first * 0.5, TURN_EFFORT, timeout_s=3)
-        rem = normalize(target - imu.get_yaw())
+        rem = normalize(target - yaw())
         reverse_arc(rem > 0, 3.0)
     for attempt in range(TURN_RETRIES):
         _abort()
@@ -672,30 +737,30 @@ def turn_to_heading_idx(heading, why):
         if abs(coast) > 3:
             log("turn: coasted %+.0f deg after motor stop — trimming"
                 % coast, console=False)
-        delta = normalize(target - imu.get_yaw())
+        delta = normalize(target - yaw())
         if abs(delta) <= TURN_TOL_DEG:
             break
         boosted = min(0.9, TURN_EFFORT + 0.15 * attempt)
-        yaw_a = imu.get_yaw()
+        yaw_a = yaw()
         ok = wiggle_turn(delta, boosted, timeout_s=3)
-        moved = abs(imu.get_yaw() - yaw_a)
+        moved = abs(yaw() - yaw_a)
         if not ok and \
-                abs(normalize(target - imu.get_yaw())) > TURN_TOL_DEG:
+                abs(normalize(target - yaw())) > TURN_TOL_DEG:
             # v1.8: wedged mid-rotation — the chassis corner is riding
             # a wall. A straight backup only buys nose clearance; a
             # REVERSE-ARC toward the target (three-point-turn style)
             # swings the nose back-and-away AND gains rotation at the
             # same time.
-            remaining = normalize(target - imu.get_yaw())
+            remaining = normalize(target - yaw())
             log("turn: WEDGED (moved %.0f of %.0f deg) — reverse-arc "
                 "%s and retrying" % (moved, abs(delta),
                                      "CCW" if remaining > 0 else "CW"))
             reverse_arc(remaining > 0, TURN_UNSTICK_CM)
     wait_rotation_stop()                 # v1.11: final reading at rest
-    achieved = normalize(imu.get_yaw() - before)
-    err = normalize(target - imu.get_yaw())
+    achieved = normalize(yaw() - before)
+    err = normalize(target - yaw())
     log("turn(%s -> %s): yaw %+.1f -> %+.1f (moved %+.1f, err %+.1f%s)"
-        % (why, DIRECTION_NAMES[heading], before, imu.get_yaw(),
+        % (why, DIRECTION_NAMES[heading], before, yaw(),
            achieved, err, "" if abs(err) <= TURN_TOL_DEG
            else " — STILL SHORT, battery/friction?"))
     time.sleep(SETTLE_TIME_S)
@@ -837,7 +902,7 @@ def drive_cell(heading, dist_cm=None):
                     boosted = True
                     log("drive: no progress at %.1fcm — boosting to %.2f"
                         % (trav, eff))
-            err = normalize(hold - imu.get_yaw())
+            err = normalize(hold - yaw())
             corr = max(-FWD_CORR_MAX, min(FWD_CORR_MAX, FWD_KP * err))
             l = eff - corr
             r = eff + corr
@@ -849,7 +914,7 @@ def drive_cell(heading, dist_cm=None):
             if time.ticks_diff(now, last_beat) >= HEARTBEAT_S * 1000:
                 last_beat = now
                 log("drive: hb trav=%.1f/%.1fcm yaw=%+.1f batt=%.2fV"
-                    % (trav, dist, imu.get_yaw(), battery_voltage()),
+                    % (trav, dist, yaw(), battery_voltage()),
                     console=False)
             time.sleep(0.01)
     finally:
@@ -857,7 +922,7 @@ def drive_cell(heading, dist_cm=None):
     actual = _traveled(start_l, start_r)
     _cpose_move(actual)                          # v1.15
     log("drive %s: %.1fcm of %.1fcm, end yaw %+.1f (target %+.1f)"
-        % (DIRECTION_NAMES[heading], actual, dist, imu.get_yaw(),
+        % (DIRECTION_NAMES[heading], actual, dist, yaw(),
            heading_yaw(heading)))
     time.sleep(SETTLE_TIME_S)
     return actual
@@ -876,7 +941,7 @@ def drive_back(dist_cm, why):
     get clear of walls. Returns actual distance backed (positive)."""
     if dist_cm < 0.5:
         return 0.0
-    hold = imu.get_yaw()
+    hold = yaw()
     start_l = drivetrain.get_left_encoder_position()
     start_r = drivetrain.get_right_encoder_position()
     t0 = time.ticks_ms()
@@ -890,7 +955,7 @@ def drive_back(dist_cm, why):
                 log("back(%s): stalled at %.1f of %.1fcm"
                     % (why, trav, dist_cm))
                 break
-            err = normalize(hold - imu.get_yaw())
+            err = normalize(hold - yaw())
             corr = max(-FWD_CORR_MAX, min(FWD_CORR_MAX, FWD_KP * err))
             # v1.4 SIGN FIX: rotation always follows (right - left)
             # velocity, so the correction is l=-corr / r=+corr in BOTH
@@ -1052,15 +1117,19 @@ def move_one_cell(position, heading):
 
 def imu_drift_dps():
     """Yaw change per second while the robot is PARKED."""
-    y0 = imu.get_yaw()
+    y0 = yaw()
     time.sleep(DRIFT_CHECK_S)
-    return (imu.get_yaw() - y0) / DRIFT_CHECK_S
+    return (yaw() - y0) / DRIFT_CHECK_S
 
 def imu_ok_or_fail():
     """v1.10: verify the gyro is stable; one recalibration attempt,
-    then fail loud. True = safe to trust absolute headings."""
+    then fail loud. True = safe to trust absolute headings.
+    v1.24: a PASSING gyro still gets its residual bias measured over
+    a longer window and trimmed in software for the whole run."""
     rate = imu_drift_dps()
     if abs(rate) <= DRIFT_MAX_DPS:
+        rate = (imu_drift_dps() + imu_drift_dps()) / 2.0   # ~1.6s refine
+        _set_drift_comp(rate)
         return True
     log("*** IMU DRIFTING %+.1f deg/s while parked — gyro bias is bad "
         "(robot was moving at power-on?). Recalibrating... ***" % rate)
@@ -1072,6 +1141,7 @@ def imu_ok_or_fail():
     rate = imu_drift_dps()
     if abs(rate) <= DRIFT_MAX_DPS:
         log("IMU recalibrated — drift now %+.1f deg/s" % rate)
+        _set_drift_comp((imu_drift_dps() + imu_drift_dps()) / 2.0)
         return True
     log("*** IMU STILL drifting %+.1f deg/s. POWER-CYCLE the robot "
         "while it sits STILL, then relaunch. ***" % rate)
@@ -1084,7 +1154,7 @@ def solve_maze():
     heading = START_HEADING
     if not imu_ok_or_fail():
         return False                      # run() flashes red 4x
-    CARDINAL["yaw0"] = imu.get_yaw()     # placed facing NORTH = launch yaw
+    CARDINAL["yaw0"] = yaw()     # placed facing NORTH = launch yaw
     log("maze: start %s facing %s (yaw0 %+.1f) grid %dx%d goal %s"
         % (position, DIRECTION_NAMES[heading], CARDINAL["yaw0"],
            GRID_WIDTH, GRID_HEIGHT, GOAL))
@@ -1169,8 +1239,8 @@ def run(sv=None):
         _HOOKS["pesto"] = getattr(sv, "pesto", None)   # v1.21: BLE scan log
     _rotate_log()
     log("wheels: %s" % _WHEEL_FIX)
-    log("===== MAZE v1.23 launch: batt=%.2fV yaw=%+.1f"
-        % (battery_voltage(), imu.get_yaw()))
+    log("===== MAZE v1.25 launch: batt=%.2fV yaw=%+.1f"
+        % (battery_voltage(), yaw()))
     log("config: cell=%.1fcm drive=%.2f turn=%.2f tol=%.1fdeg "
         "wall<%.0fcm scale=%.2f/%.2f clear<%.0fcm cellok=%.0f%% "
         "standoff=%.0fcm"

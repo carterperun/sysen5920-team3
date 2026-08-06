@@ -147,7 +147,14 @@ ABORT_BUTTONS = (8, 9)      # ANY of these = all-stop (8=Select/Back,
 # depend on one button index or a healthy radio.
 USER_ABORT_HOLD_S = 0.8     # holding the onboard USER button this long =
                             # all-stop (works even if BLE is dead)
-BLE_RESTART_S = 10.0        # v1.22: idle (menu/calibration) with NO
+TELEM_PERIOD_S = 0.4        # v1.25: min gap between BLE telemetry
+                            # notifications — the unthrottled 50-100/s
+                            # flood wedged the BLE stack (freezes)
+BLE_RESTART_S = 20.0        # v1.24 (driver): 10 -> 20s — 10s was
+                            # shorter than a normal first pairing
+                            # after power-up, so the board rebooted
+                            # out from under the connect attempt.
+                            # Idle (menu/calibration) with NO
                             # controller for this long -> soft-reboot
                             # the board. The BLE stack sometimes wedges
                             # on the first connection after power-up;
@@ -381,6 +388,7 @@ class MainCode:
         self._paddle_last_ms = time.ticks_ms()
         self._last_conn_ms = time.ticks_ms()
         self._last_packet_ms = time.ticks_ms()
+        self._telem_ms = 0           # v1.25: telemetry rate limiter
         # Timestamp every incoming controller packet by wrapping the
         # PestoLink receive hook — this is how check_abort can tell a
         # LIVE controller from a frozen app that BLE still calls
@@ -393,6 +401,26 @@ class MainCode:
         self.pesto.on_write = _stamped_on_write
 
     # ---------------- light + controller helpers ----------------
+
+    def telemetry(self, text=None, color="FFFFFF"):
+        """v1.25 ("keeps timing out on bluetooth and freezing"): ALL
+        telemetry goes through here, rate-limited to one notification
+        per TELEM_PERIOD_S. The menu and manual loops were pushing a
+        BLE notification EVERY loop pass (50-100/s) — that floods the
+        RP2040 BLE stack's notify queue until the radio wedges, which
+        is what the freeze/timeout looks like from the app. text=None
+        sends the battery voltage instead."""
+        now = time.ticks_ms()
+        if time.ticks_diff(now, self._telem_ms) < int(TELEM_PERIOD_S * 1000):
+            return
+        self._telem_ms = now
+        try:
+            if text is None:
+                self.pesto.telemetryPrintBatteryVoltage(battery_voltage())
+            else:
+                self.pesto.telemetryPrint(text, color)
+        except Exception:
+            pass                     # telemetry must never crash a mode
 
     def set_light(self, rgb):
         try:
@@ -830,7 +858,16 @@ class MainCode:
         """v1.22: call from idle disconnected loops. Tracks how long
         the controller has been missing; past BLE_RESTART_S the board
         soft-reboots to reset a wedged BLE stack (auto-relaunches into
-        the menu because this file runs as main.py)."""
+        the menu because this file runs as main.py).
+        v1.23 (driver rule): NEVER during an autonomous challenge —
+        the maze's yellow scanning light must never end in a surprise
+        reboot. Guarded here so no present or future call site can
+        fire it mid-challenge; challenges keep their own 1.5s
+        disconnect ALL-STOP, and the 10s reboot countdown only starts
+        once the robot is back in the idle menu."""
+        if self.in_challenge:            # v1.23: hard guard
+            self._ble_down_ms = None
+            return
         now = time.ticks_ms()
         if self._ble_down_ms is None:
             self._ble_down_ms = now
@@ -858,7 +895,7 @@ class MainCode:
                 continue
             self._ble_down_ms = None
             self.blink(PINK)
-            self.pesto.telemetryPrint("MENU", "FF2878")
+            self.telemetry("MENU", "FF2878")     # v1.25: rate-limited
             # One edge-scan per loop pass (pressed() consumes edges, so
             # scan once and dispatch from the result). Every press in
             # the menu is logged with its index — the BUTTON SPY: use it
@@ -977,13 +1014,13 @@ class MainCode:
 
             if self.reverse:
                 self.blink(WHITE, REVERSE_BLINK_S)   # flashing white
-                self.pesto.telemetryPrint(
-                    "REV+TRB" if self.turbo else "REVERSE", "FFFFFF")
+                self.telemetry("REV+TRB" if self.turbo else "REVERSE",
+                               "FFFFFF")         # v1.25: rate-limited
             elif self.turbo:
                 self.blink(RED, TURBO_BLINK_S)   # fast red flash = turbo
-                self.pesto.telemetryPrint("TURBO", "FF0000")
+                self.telemetry("TURBO", "FF0000")
             else:
-                self.pesto.telemetryPrintBatteryVoltage(battery_voltage())
+                self.telemetry()                 # battery voltage
             time.sleep(0.01)
 
     # ---------------- challenge loader ----------------
@@ -1071,7 +1108,7 @@ class MainCode:
 
 log_selftest()
 log("")
-log("======== BOOT: main_code v1.22 ======== batt=%.2fV" % battery_voltage())
+log("======== BOOT: main_code v1.25 ======== batt=%.2fV" % battery_voltage())
 log("wheels: %s" % _WHEEL_FIX)
 if battery_voltage() < LOW_BATT_V:
     log("*** WARNING: battery LOW for a %d-cell pack (<%.1fV) ***"
