@@ -1,0 +1,28 @@
+import time
+from XRPLib.differential_drive import DifferentialDrive
+
+differentialDrive = DifferentialDrive.get_default_differential_drive()
+
+
+print('Make sure there is enough space for the robot to move safely.')
+time.sleep(1)
+print('The program will start in 3...')
+time.sleep(0.9)
+print('The program will start in 2...')
+time.sleep(0.9)
+print('The program will start in 1...')
+time.sleep(0.9)
+differentialDrive.straight(18, 0.5)
+differentialDrive.straight((-18), 0.5)
+time.sleep(0.2)
+differentialDrive.turn(90, 0.5)
+time.sleep(0.2)
+differentialDrive.turn(90, 0.5)
+time.sleep(0.2)
+differentialDrive.straight(18, 0.5)
+print('The movement sequence is complete.')
+
+
+
+## 2026-07-29 14:07:26
+##XRPBLOCKS {"blocks":{"languageVersion":0,"blocks":[{"type":"text_print","id":"6PxECYyFYINy16w93z^4","x":210,"y":30,"inputs":{"TEXT":{"shadow":{"type":"text","id":"F#hrO{oIHxI[*_bYB~o@","fields":{"TEXT":"Make sure there is enough space for the robot to move safely."}}}},"next":{"block":{"type":"xrp_sleep","id":"6Ut,DEIeI/I`O9.cSt)/","inputs":{"TIME":{"shadow":{"type":"math_number","id":"t-2HYEK`C^y,L[{mf,K6","fields":{"NUM":1}}}},"next":{"block":{"type":"text_print","id":"DJ4f!/z28bp^Wb/iHqrz","inputs":{"TEXT":{"shadow":{"type":"text","id":"h(cPc=U{oHH}l+EkFNq5","fields":{"TEXT":"The program will start in 3..."}}}},"next":{"block":{"type":"xrp_sleep","id":"vB{/E8.LMWdQ6p{ZE-pi","inputs":{"TIME":{"shadow":{"type":"math_number","id":"Xd|FV=*3*h`e5Ws9xd^:","fields":{"NUM":0.9}}}},"next":{"block":{"type":"text_print","id":"yE:ch9~Ckj;WP(hRMeOu","inputs":{"TEXT":{"shadow":{"type":"text","id":"vk`($ba}b_n|ZUB?egA~","fields":{"TEXT":"The program will start in 2..."}}}},"next":{"block":{"type":"xrp_sleep","id":"@/?OZ`@]S88Oqs7!+]vt","inputs":{"TIME":{"shadow":{"type":"math_number","id":"D[kdlg1%TTvd@OHuqm-U","fields":{"NUM":0.9}}}},"next":{"block":{"type":"text_print","id":"Fk:Ovhb(OUMxZM/SFTBi","inputs":{"TEXT":{"shadow":{"type":"text","id":"WnJIbcm!d{QV!rZ;^MFE","fields":{"TEXT":"The program will start in 1..."}}}},"next":{"block":{"type":"xrp_sleep","id":"9*HA64j@K(yh:WD0u!jM","inputs":{"TIME":{"shadow":{"type":"math_number","id":"to:-3Z51%6h;?e%;aRPZ","fields":{"NUM":0.9}}}},"next":{"block":{"type":"xrp_straight_effort","id":")L4g}Ai2Ny!rdN)aoqvD","inputs":{"dist":{"shadow":{"type":"math_number","id":"SYL)9a8vDWrUeMcH[(lj","fields":{"NUM":18}}},"effort":{"shadow":{"type":"math_number","id":"Whj1,n`MqxUY8NGD/H]T","fields":{"NUM":0.5}}}},"next":{"block":{"type":"xrp_straight_effort","id":"pLiB5!5*4F#CCdv,+HoP","inputs":{"dist":{"shadow":{"type":"math_number","id":":,MdrXWsSIv_o1([#5G{","fields":{"NUM":-18}}},"effort":{"shadow":{"type":"math_number","id":"Am%}x`y;DxZw,9bt3a[q","fields":{"NUM":0.5}}}},"next":{"block":{"type":"xrp_sleep","id":"2}le$t?NE#)Z~0g*[seL","inputs":{"TIME":{"shadow":{"type":"math_number","id":"v57QaB?nw7.1%jQa/fu5","fields":{"NUM":0.2}}}},"next":{"block":{"type":"xrp_turn_effort","id":"YzMH5#YQ{e?FT){9_SN2","inputs":{"degrees":{"shadow":{"type":"math_number","id":"4;KVc?u|!:s*lP*z1!4n","fields":{"NUM":90}}},"effort":{"shadow":{"type":"math_number","id":"aWTZv6e.{,qcTgp.=t5~","fields":{"NUM":0.5}}}},"next":{"block":{"type":"xrp_sleep","id":"%]=}OK=jhQi58`hSBSn}","inputs":{"TIME":{"shadow":{"type":"math_number","id":"Yui[4r=AV.hYs(`tJVY#","fields":{"NUM":0.2}}}},"next":{"block":{"type":"xrp_turn_effort","id":"7+F:!_EQKIM!Sv}J]+ny","inputs":{"degrees":{"shadow":{"type":"math_number","id":"GzLKBaHwn5d[m9V!k%#.","fields":{"NUM":90}}},"effort":{"shadow":{"type":"math_number","id":"Cf2b)u85S~a?[n3cHo4m","fields":{"NUM":0.5}}}},"next":{"block":{"type":"xrp_sleep","id":"+Q6c1-p{SLP/rbiTiBds","inputs":{"TIME":{"shadow":{"type":"math_number","id":"rtDW|I@Qplaa4;$c#Q0y","fields":{"NUM":0.2}}}},"next":{"block":{"type":"xrp_straight_effort","id":"kiGz(3Zjd(UsxCZ+lhAt","inputs":{"dist":{"shadow":{"type":"math_number","id":"kz+hPJ$igE/p![5K=n*h","fields":{"NUM":18}}},"effort":{"shadow":{"type":"math_number","id":"itgwVBxen[(%R![3(v2c","fields":{"NUM":0.5}}}},"next":{"block":{"type":"text_print","id":"Q[gpxw~k56+6/Mcc*T^o","inputs":{"TEXT":{"shadow":{"type":"text","id":"*zjRXV`X(8YZT?eVYN;g","fields":{"TEXT":"The movement sequence is complete."}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}]}}

@@ -1,0 +1,33 @@
+from XRPLib.differential_drive import DifferentialDrive
+import time
+
+movingValue = None
+
+differentialDrive = DifferentialDrive.get_default_differential_drive()
+
+def moveBack(movingValue):
+  differentialDrive.straight(movingValue, 0.5)
+  time.sleep(0.5)
+  movingValue = movingValue * -1
+  differentialDrive.straight(movingValue, 0.5)
+
+
+print('In this program, the robot will move a greater distance each time.')
+time.sleep(1)
+print('Starting with the shortest distance.')
+moveBack(10)
+print('Now the robot will move farther.')
+time.sleep(1)
+moveBack(15)
+print('Now it will move even farther.')
+time.sleep(1)
+moveBack(20)
+print('Finally, the robot will move the farthest distance.')
+time.sleep(1)
+moveBack(30)
+print('The movement sequence is complete.')
+
+
+
+## 2026-07-29 13:07:20
+##XRPBLOCKS {"blocks":{"languageVersion":0,"blocks":[{"type":"procedures_defnoreturn","id":"F0.?*[qA:ukIGP1D*50#","x":150,"y":30,"extraState":{"params":[{"name":"movingValue","id":"Fc{I=:w*zK4/5GNrJpGt"}]},"fields":{"NAME":"moveBack"},"inputs":{"STACK":{"block":{"type":"xrp_straight_effort","id":"#U+?Hu^[Zw,1@G)LT-VG","inputs":{"dist":{"shadow":{"type":"math_number","id":"8vcf$UubgZQ#l)rTFZ-X","fields":{"NUM":20}},"block":{"type":"variables_get","id":"nGmD//R-#GEcp2(4XR~p","fields":{"VAR":{"id":"Fc{I=:w*zK4/5GNrJpGt"}}}},"effort":{"shadow":{"type":"math_number","id":"]L.yghF*{P,cF*CN|pAn","fields":{"NUM":0.5}}}},"next":{"block":{"type":"xrp_sleep","id":"{Co)zJ!i?SH*?*$.$A2l","inputs":{"TIME":{"shadow":{"type":"math_number","id":"}H4-=2PngR,`O?z8$_r6","fields":{"NUM":0.5}}}},"next":{"block":{"type":"variables_set","id":"|n:eZu*-@276?{wR2H*x","fields":{"VAR":{"id":"Fc{I=:w*zK4/5GNrJpGt"}},"inputs":{"VALUE":{"block":{"type":"math_arithmetic","id":"@Hx9X*E-?@QoV~$px=%r","fields":{"OP":"MULTIPLY"},"inputs":{"A":{"shadow":{"type":"math_number","id":"7vmZpaIuHc/oLm-2dRVV","fields":{"NUM":1}},"block":{"type":"variables_get","id":"oJk^BhS|^iP,@uWWuec=","fields":{"VAR":{"id":"Fc{I=:w*zK4/5GNrJpGt"}}}},"B":{"shadow":{"type":"math_number","id":"s~P@8@f(9w0Jq(8m{OdD","fields":{"NUM":-1}}}}}}},"next":{"block":{"type":"xrp_straight_effort","id":"WSu(l-_vI=iWp@/kQXDu","inputs":{"dist":{"shadow":{"type":"math_number","id":"8vcf$UubgZQ#l)rTFZ-X","fields":{"NUM":20}},"block":{"type":"variables_get","id":"d{xL#i__e)uC$9)E#jGY","fields":{"VAR":{"id":"Fc{I=:w*zK4/5GNrJpGt"}}}},"effort":{"shadow":{"type":"math_number","id":"3gp{Vjfp_3KbjT/|_Eqn","fields":{"NUM":0.5}}}}}}}}}}}}}},{"type":"text_print","id":"}z/}QWTdhB)ANPLy`%4V","x":150,"y":250,"inputs":{"TEXT":{"shadow":{"type":"text","id":"Y;D=,8oB,(ON-E,,cH+$","fields":{"TEXT":"In this program, the robot will move a greater distance each time."}}}},"next":{"block":{"type":"xrp_sleep","id":"g,,`=n2pPis{b*Ok{Jc,","inputs":{"TIME":{"shadow":{"type":"math_number","id":"6h|mS:R(2H#Yad]8eJAk","fields":{"NUM":1}}}},"next":{"block":{"type":"text_print","id":"]_aQ8fYq3r5!#^K)r9M}","inputs":{"TEXT":{"shadow":{"type":"text","id":"Xc/z?VW|:~k:A~,uSCk-","fields":{"TEXT":"Starting with the shortest distance."}}}},"next":{"block":{"type":"procedures_callnoreturn","id":"-v_-_L`+MytOR-=jO5}i","extraState":{"name":"moveBack","params":["movingValue"]},"inputs":{"ARG0":{"block":{"type":"math_number","id":"S0XWXW$bg1UoG/RYde4+","fields":{"NUM":10}}}},"next":{"block":{"type":"text_print","id":"d`qeEJSV$_Kv_QIgs0pF","inputs":{"TEXT":{"shadow":{"type":"text","id":"HhEG+d0}z!agEUtfa8ED","fields":{"TEXT":"Now the robot will move farther."}}}},"next":{"block":{"type":"xrp_sleep","id":"*vu:}OC-G{hM`9gq/S6(","inputs":{"TIME":{"shadow":{"type":"math_number","id":"r{]s!he:]ju#/m?6pEK:","fields":{"NUM":1}}}},"next":{"block":{"type":"procedures_callnoreturn","id":".iTDuX75tCwqLZMG,eBw","extraState":{"name":"moveBack","params":["movingValue"]},"inputs":{"ARG0":{"block":{"type":"math_number","id":"c.E@^vN,j~nLX;)%jXEL","fields":{"NUM":15}}}},"next":{"block":{"type":"text_print","id":":4u#vh[N;)P3J^,(I137","inputs":{"TEXT":{"shadow":{"type":"text","id":"%8{+wbB2q+}UC=2KOYTC","fields":{"TEXT":"Now it will move even farther."}}}},"next":{"block":{"type":"xrp_sleep","id":"2k|wBgP?VZte3JzR:lpX","inputs":{"TIME":{"shadow":{"type":"math_number","id":"QdRiAqi-^Wh;a;,ZiNDs","fields":{"NUM":1}}}},"next":{"block":{"type":"procedures_callnoreturn","id":"d@M~Qj!rba-`,0j}UYN7","extraState":{"name":"moveBack","params":["movingValue"]},"inputs":{"ARG0":{"block":{"type":"math_number","id":"fCl|rlu#yZ]0SiY`:7]L","fields":{"NUM":20}}}},"next":{"block":{"type":"text_print","id":"7E*K;c{nS1MGv;2QFg~e","inputs":{"TEXT":{"shadow":{"type":"text","id":"OP]i0DtV]dTQRc6kM|t!","fields":{"TEXT":"Finally, the robot will move the farthest distance."}}}},"next":{"block":{"type":"xrp_sleep","id":"duwm:?X{8p]1xNu*x;W,","inputs":{"TIME":{"shadow":{"type":"math_number","id":"Zs=X{0*HNGZ?U5,Cu-kA","fields":{"NUM":1}}}},"next":{"block":{"type":"procedures_callnoreturn","id":"H0.Zct?qFW80ON~Xz0hc","extraState":{"name":"moveBack","params":["movingValue"]},"inputs":{"ARG0":{"block":{"type":"math_number","id":"S~(x(,MV~ewZ^D^uz6,*","fields":{"NUM":30}}}},"next":{"block":{"type":"text_print","id":"VQX|aW,wjQNn^ydO:$]+","inputs":{"TEXT":{"shadow":{"type":"text","id":"a4NVk:VI.s2lU8(]e;lk","fields":{"TEXT":"The movement sequence is complete."}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}]},"variables":[{"name":"valor a moverse","id":"WP?yRE:?ggThXR3~#JwR"},{"name":"movingValue","id":"Fc{I=:w*zK4/5GNrJpGt"}]}
