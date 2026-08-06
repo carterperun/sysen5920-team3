@@ -123,14 +123,16 @@ DRIVE_STALL_MAX = 0.8
 
 # Turns — the proven wiggle scheme (sumo v4.5+ / main_code v1.14+).
 TURN_EFFORT = 0.75
-TURN_TOL_DEG = 4.0
+TURN_EFFORT_LOW = 0.45      # finishing effort to limit overshoot
+TURN_SLOW_ZONE_DEG = 35.0   # start slowing this far from the target
+TURN_TOL_DEG = 2.0
 TURN_RETRIES = 4            # v1.2: one more attempt (unstick eats one)
 TURN_STUCK_DEG = 8.0        # attempt moved less than this with lots
                             # left to go = physically pinned -> back up
 TURN_UNSTICK_CM = 5.0       # how far to back away before retrying
 WIGGLE_BIAS = 0.18
 WIGGLE_PERIOD_S = 0.22
-WIGGLE_TOL_DEG = 3.0
+WIGGLE_TOL_DEG = 2.0
 LEFT_TURN_BOOST = 1.2       # this robot turns LEFT (CCW) weaker
 
 # Heading hold during cell drives
@@ -283,7 +285,11 @@ def wiggle_turn(degrees, effort=TURN_EFFORT, timeout_s=None):
             if time.ticks_diff(now, phase_ms) >= WIGGLE_PERIOD_S * 1000:
                 phase_ms = now
                 bias = -bias
-            mag = min(0.95, effort * (LEFT_TURN_BOOST if err > 0 else 1.0))
+            commanded_effort = (TURN_EFFORT_LOW
+                                if abs(err) <= TURN_SLOW_ZONE_DEG
+                                else effort)
+            mag = min(0.95, commanded_effort
+                      * (LEFT_TURN_BOOST if err > 0 else 1.0))
             eff = mag if err > 0 else -mag
             l = -eff + bias
             r = eff + bias
