@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team 3 XRP Rover — Controls &amp; Status Lights</title>
+<style>
+  :root {
+    --bg: #12141a; --card: #1c1f28; --card2: #232734;
+    --text: #e8eaf0; --muted: #9aa1b2; --line: #323848;
+    --pink: #ff2878; --green: #22c55e; --cyan: #22d3ee;
+    --orange: #f59e0b; --red: #ef4444; --violet: #9600ff;
+    --blue: #3b82f6; --white: #f5f5f5;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.55 "Segoe UI", system-ui, sans-serif;
+    padding: 28px 18px 60px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 26px; letter-spacing: .5px; }
+  h1 .team { color: var(--pink); }
+  .sub { color: var(--muted); margin: 4px 0 26px; }
+  h2 {
+    font-size: 15px; text-transform: uppercase; letter-spacing: 2px;
+    color: var(--muted); margin: 34px 0 12px;
+    border-bottom: 1px solid var(--line); padding-bottom: 6px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  h2 .sw { width: 18px; height: 18px; flex: none; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 14px;
+  }
+  .mode-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .mode-name { font-size: 18px; font-weight: 700; }
+  .mode-note { color: var(--muted); font-size: 13px; }
+  .dot { width: 16px; height: 16px; border-radius: 50%; flex: none;
+         box-shadow: 0 0 10px 1px currentColor; }
+  .row { display: flex; align-items: baseline; gap: 12px;
+         padding: 6px 0; border-top: 1px dashed #2a2f3d; }
+  .row:first-of-type { border-top: none; }
+  .keys { flex: none; width: 170px; text-align: right; }
+  kbd {
+    display: inline-block; background: var(--card2); border: 1px solid #3a4154;
+    border-bottom-width: 3px; border-radius: 6px; padding: 2px 9px;
+    font: 600 12px/1.5 "Segoe UI", system-ui, sans-serif; white-space: nowrap;
+  }
+  kbd.a { color: #7ce38b; }  kbd.b { color: #ff8fa3; }
+  kbd.x { color: #7cc4ff; }  kbd.y { color: #ffd66e; }
+  kbd.sys { color: #e8eaf0; background: #3a2430; border-color: #6b3a4d; }
+  .what { color: var(--text); }
+  .what small { color: var(--muted); display: block; }
+  /* LED chart */
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #2a2f3d; }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .sw { width: 26px; height: 26px; border-radius: 50%; }
+  .blink-slow { animation: blink 0.7s steps(1) infinite; }
+  .blink-fast { animation: blink 0.2s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0.08; box-shadow: none; } }
+  .led-pink   { background: var(--pink);   box-shadow: 0 0 12px 2px var(--pink); }
+  .led-green  { background: var(--green);  box-shadow: 0 0 12px 2px var(--green); }
+  .led-cyan   { background: var(--cyan);   box-shadow: 0 0 12px 2px var(--cyan); }
+  .led-orange { background: var(--orange); box-shadow: 0 0 12px 2px var(--orange); }
+  .led-red    { background: var(--red);    box-shadow: 0 0 12px 2px var(--red); }
+  .led-violet { background: var(--violet); box-shadow: 0 0 12px 2px var(--violet); }
+  .led-blue   { background: var(--blue);   box-shadow: 0 0 12px 2px var(--blue); }
+  .led-white  { background: var(--white);  box-shadow: 0 0 12px 2px var(--white); }
+  /* all-stop banner */
+  .estop {
+    border: 2px solid var(--red); background: #2a1418;
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 14px;
+  }
+  .estop h3 { color: var(--red); font-size: 17px; margin-bottom: 8px;
+              letter-spacing: 1px; }
+  .estop li { margin: 5px 0 5px 20px; }
+  .estop .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  /* gamepad svg */
+  .padwrap { text-align: center; }
+  svg text { font: 600 11px "Segoe UI", system-ui, sans-serif; fill: var(--text); }
+  svg text.lbl { font-size: 10px; fill: var(--muted); font-weight: 400; }
+  .foot { color: var(--muted); font-size: 12.5px; margin-top: 30px;
+          border-top: 1px solid var(--line); padding-top: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1><span class="team">TEAM 3</span> XRP ROVER — CONTROLS</h1>
+  <div class="sub">Competition supervisor <b>main_code.py</b> · one program, one controller, everything below</div>
+
+  <!-- ================= ALL-STOP ================= -->
+  <div class="estop">
+    <h3>&#9888; ALL-STOP — WORKS FROM ANY MODE</h3>
+    <ul>
+      <li><kbd class="sys">START</kbd> or <kbd class="sys">SELECT</kbd> — instant stop, back to menu</li>
+      <li><b>HOLD the USER button on the robot ~1 s</b> — hardware stop, works even if Bluetooth is dead</li>
+      <li>Controller turned off / app frozen for 1.5 s during any autonomous run — robot stops itself</li>
+    </ul>
+    <div class="hint">Every all-stop lands on the blinking-pink MENU with motors off, and logs which trigger fired.</div>
+  </div>
+
+  <!-- ================= LED CHART ================= -->
+  <h2>Status Light — what the RGB LED means</h2>
+  <div class="card">
+    <table>
+      <tr><th>Light</th><th>Pattern</th><th>Meaning</th></tr>
+      <tr><td><div class="sw led-pink blink-slow"></div></td><td>Pink, blinking</td>
+          <td><b>MENU</b> — parked &amp; safe, waiting for a mode pick</td></tr>
+      <tr><td><div class="sw led-green"></div></td><td>Green, solid</td>
+          <td><b>MANUAL</b> — sticks are live</td></tr>
+      <tr><td><div class="sw led-red blink-fast"></div></td><td>Red, fast flash</td>
+          <td><b>TURBO ON</b> in manual — full speed cap, drive carefully</td></tr>
+      <tr><td><div class="sw led-white blink-fast"></div></td><td>White, fast flash</td>
+          <td><b>REVERSE-DRIVE ON</b> in manual — sticks inverted, rover drives tail-first (shows even if turbo is also on)</td></tr>
+      <tr><td><div class="sw led-cyan"></div></td><td>Cyan, solid</td>
+          <td><b>AUTONOMOUS RUNNING</b> (challenge or D-pad assist) — hands off the robot!</td></tr>
+      <tr><td><div class="sw led-orange blink-slow"></div></td><td>Orange, blinking</td>
+          <td><b>NO CONTROLLER</b> — motors stopped, waiting for PestoLink to (re)connect</td></tr>
+      <tr><td><div class="sw led-red"></div></td><td>Red, solid (~1–3 s)</td>
+          <td><b>PROBLEM</b> — at boot: log file broken (flash full/corrupt) · after a crash: error logged, returning to menu · in sumo: motors not moving (check power switch / battery)</td></tr>
+      <tr><td><div class="sw led-blue"></div></td><td>Blue, solid</td>
+          <td>Standalone test scripts only: connected &amp; armed, waiting for launch button</td></tr>
+    </table>
+  </div>
+
+  <!-- ================= MODES ================= -->
+  <h2><span class="sw led-pink blink-slow"></span>MENU <span style="text-transform:none">· blinking pink</span></h2>
+  <div class="card">
+    <div class="row"><div class="keys"><kbd class="a">A</kbd></div>
+      <div class="what">Enter <b>MANUAL</b> driving mode</div></div>
+    <div class="row"><div class="keys"><kbd class="b">B</kbd></div>
+      <div class="what">Launch <b>LINE FOLLOWER</b> <span style="color:var(--muted)">(line_track.py — simple tracker, no calibration)</span>
+      <small>Place the robot straddling the line FIRST — the B press is the start (light goes cyan). Stops itself when the line ends; START stops it anytime.</small></div></div>
+    <div class="row"><div class="keys"><kbd class="x">X</kbd></div>
+      <div class="what">Launch <b>SUMO</b>
+      <small>Place the robot near the RING CENTER first — the X press is the start. It first SURVEYS the ring (straight to the line, back, 180&deg;, across to the far line) to set Home at the true center, then hunts blocks. A geo-fence keeps every move inside the circle.</small></div></div>
+    <div class="row"><div class="keys"><kbd class="y">Y</kbd></div>
+      <div class="what">Launch <b>MAZE</b> <span style="color:var(--muted)">(maze_solver.py — right-wall follower)</span>
+      <small>Place the robot in the START cell facing NORTH (toward the goal end) first — the Y press is the start. Turns lock to compass headings so 90&deg;s can't drift.</small></div></div>
+    <div class="row"><div class="keys"><kbd>D-Pad &#8593;</kbd></div>
+      <div class="what">Launch <b>AUTO SMASH TOWER</b> <span style="color:var(--muted)">(tower_smash_auto.py)</span>
+      <small>Point the robot AT THE TOWER first. It ranges the tower, charges through it +20 cm at high speed, backs up to the tower spot, then does three 90&deg; clearing sweeps.</small></div></div>
+    <div class="row"><div class="keys"><kbd class="sys">any button</kbd></div>
+      <div class="what">Button spy: every press in the menu logs its index to <b>main_log.txt</b>
+      <small>Use it to verify what your controller calls START, triggers, D-pad…</small></div></div>
+  </div>
+
+  <h2><span class="sw led-green"></span>MANUAL <span style="text-transform:none">· solid green · red flash = turbo</span></h2>
+  <div class="card">
+    <div class="row"><div class="keys"><kbd>L-Stick &#8593;&#8595;</kbd></div>
+      <div class="what">Throttle (forward / reverse)</div></div>
+    <div class="row"><div class="keys"><kbd>R-Stick &#8592;&#8594;</kbd></div>
+      <div class="what">Steering</div></div>
+    <div class="row"><div class="keys"><kbd class="b">B</kbd></div>
+      <div class="what"><b>TURBO toggle</b> — speed cap 0.8 &#8594; 1.0, light flashes red fast
+      <small>Press again to return to normal. Always starts OFF when entering manual. (B launches the line follower only from the MENU — no conflict.)</small></div></div>
+    <div class="row"><div class="keys"><kbd class="x">X</kbd></div>
+      <div class="what"><b>REVERSE-DRIVE toggle</b> — light flashes white, sticks invert to drive tail-first intuitively
+      <small>Stick-forward backs up, stick-right swings the tail right. Press X again for normal. Starts OFF on entering manual; D-pad assists stay nose-relative.</small></div></div>
+    <div class="row"><div class="keys"><kbd class="sys">LEFT TRIGGER</kbd></div>
+      <div class="what"><b>Jog paddle FORWARD</b> — hold to move; ~1.5 s of holding covers the full travel
+      <small>Safety-clamped at the end stops (10&ndash;190&deg;); servo power cuts 1 s after release so it can't burn out. Works during D-pad auto-forward too.</small></div></div>
+    <div class="row"><div class="keys"><kbd class="sys">RIGHT TRIGGER</kbd></div>
+      <div class="what"><b>Jog paddle BACK</b> — hold to move, same speed and safety clamps</div></div>
+    <div class="row"><div class="keys"><kbd>D-Pad &#8593;</kbd></div>
+      <div class="what">Auto-drive <b>forward 100 cm</b> (cyan light)
+      <small>Holds heading with the IMU; stops early if the rangefinder sees an obstacle within 15 cm.</small></div></div>
+    <div class="row"><div class="keys"><kbd>D-Pad &#8592;</kbd></div>
+      <div class="what">Rotate <b>90&deg; left</b> (cyan light)</div></div>
+    <div class="row"><div class="keys"><kbd>D-Pad &#8594;</kbd></div>
+      <div class="what">Rotate <b>90&deg; right</b> (cyan light)</div></div>
+    <div class="row"><div class="keys"><kbd>D-Pad &#8595;</kbd></div>
+      <div class="what">Rotate <b>180&deg;</b> (cyan light)</div></div>
+  </div>
+
+  <!-- ================= GAMEPAD ================= -->
+  <h2>Controller map</h2>
+  <div class="card padwrap">
+    <svg viewBox="0 0 640 330" width="100%" style="max-width:640px">
+      <!-- body -->
+      <path d="M120 90 Q90 88 68 108 Q30 146 24 220 Q20 272 52 284 Q84 296 116 250
+               Q136 222 168 222 L472 222 Q504 222 524 250 Q556 296 588 284
+               Q620 272 616 220 Q610 146 572 108 Q550 88 520 90 Z"
+            fill="#232734" stroke="#3a4154" stroke-width="2"/>
+      <!-- triggers -->
+      <rect x="96" y="46" width="110" height="20" rx="10" fill="#3a2430" stroke="#6b3a4d"/>
+      <text x="151" y="60" text-anchor="middle" style="font-size:10px">LT</text>
+      <text x="151" y="36" text-anchor="middle" class="lbl">jog paddle fwd (hold)</text>
+      <rect x="106" y="70" width="90" height="16" rx="8" fill="#2b3040" stroke="#3a4154"/>
+      <text x="151" y="82" text-anchor="middle" style="font-size:9px">LB</text>
+      <rect x="434" y="46" width="110" height="20" rx="10" fill="#3a2430" stroke="#6b3a4d"/>
+      <text x="489" y="60" text-anchor="middle" style="font-size:10px">RT</text>
+      <text x="489" y="36" text-anchor="middle" class="lbl">jog paddle back (hold)</text>
+      <rect x="444" y="70" width="90" height="16" rx="8" fill="#2b3040" stroke="#3a4154"/>
+      <text x="489" y="82" text-anchor="middle" style="font-size:9px">RB</text>
+      <!-- select / start -->
+      <rect x="262" y="118" width="46" height="20" rx="10" fill="#3a2430" stroke="#ef4444"/>
+      <text x="285" y="132" text-anchor="middle" style="font-size:9px">SELECT</text>
+      <rect x="332" y="118" width="46" height="20" rx="10" fill="#3a2430" stroke="#ef4444"/>
+      <text x="355" y="132" text-anchor="middle" style="font-size:9px">START</text>
+      <text x="320" y="107" text-anchor="middle" class="lbl" style="fill:#ef4444">ALL-STOP &#8594; MENU</text>
+      <!-- dpad -->
+      <g stroke="#3a4154" fill="#2b3040">
+        <rect x="130" y="128" width="26" height="72" rx="6"/>
+        <rect x="107" y="151" width="72" height="26" rx="6"/>
+      </g>
+      <text x="143" y="110" text-anchor="middle" class="lbl">tower smash (menu)</text>
+      <text x="143" y="122" text-anchor="middle" class="lbl">100 cm fwd (manual)</text>
+      <text x="86" y="168" text-anchor="end" class="lbl">90&deg; L</text>
+      <text x="200" y="168" class="lbl">90&deg; R</text>
+      <text x="143" y="216" text-anchor="middle" class="lbl">180&deg;</text>
+      <!-- abxy -->
+      <circle cx="497" cy="134" r="15" fill="#2b3040" stroke="#4a5168"/>
+      <text x="497" y="139" text-anchor="middle" style="fill:#e6c65c">Y</text>
+      <text x="497" y="110" text-anchor="middle" class="lbl">maze (menu)</text>
+      <circle cx="463" cy="166" r="15" fill="#2b3040" stroke="#7cc4ff"/>
+      <text x="463" y="171" text-anchor="middle" style="fill:#7cc4ff">X</text>
+      <text x="424" y="162" text-anchor="end" class="lbl">sumo (menu)</text>
+      <text x="424" y="176" text-anchor="end" class="lbl">reverse (manual)</text>
+      <circle cx="531" cy="166" r="15" fill="#2b3040" stroke="#ff8fa3"/>
+      <text x="531" y="171" text-anchor="middle" style="fill:#ff8fa3">B</text>
+      <text x="554" y="162" class="lbl">line (menu)</text>
+      <text x="554" y="176" class="lbl">turbo (manual)</text>
+      <circle cx="497" cy="198" r="15" fill="#2b3040" stroke="#7ce38b"/>
+      <text x="497" y="203" text-anchor="middle" style="fill:#7ce38b">A</text>
+      <text x="497" y="232" text-anchor="middle" class="lbl">manual</text>
+      <!-- sticks -->
+      <circle cx="232" cy="222" r="30" fill="#2b3040" stroke="#3a4154"/>
+      <circle cx="232" cy="222" r="17" fill="#323848" stroke="#4a5168"/>
+      <text x="232" y="272" text-anchor="middle" class="lbl">throttle &#8593;&#8595;</text>
+      <circle cx="408" cy="222" r="30" fill="#2b3040" stroke="#3a4154"/>
+      <circle cx="408" cy="222" r="17" fill="#323848" stroke="#4a5168"/>
+      <text x="408" y="272" text-anchor="middle" class="lbl">steer &#8592;&#8594;</text>
+    </svg>
+  </div>
+
+  <div class="foot">
+    Confirmed indices (button spy + servo-test logs): A=0 · B=1 · X=2 · Y=3 · LT=6 · RT=7 · SELECT=8 · START=9 · D-pad 12/13/14/15.
+    Line follower = line_track.py (simple, no calibration). Standalone test scripts (run any challenge file directly) skip the menu and use the blue armed light.
+    Logs on the robot's flash: main_log.txt (supervisor) · sumo_log.txt · line_log.txt · maze_log.txt · tower_log.txt.
+  </div>
+
+</div>
+</body>
+</html>

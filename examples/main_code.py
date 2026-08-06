@@ -30,9 +30,16 @@ CONTROLS
                        start, START ends it)
     X (Button 2)    -> SUMO (from sumo_auto.py; place the robot at the
                        RING CENTER first — the X press is the start)
+    Y (Button 3)    -> MAZE (from maze_solver.py; place the robot in
+                       the start cell FACING NORTH first — right-wall
+                       follower to the goal cell)
+    D-pad UP (12)   -> AUTO SMASH TOWER (from tower_smash_auto.py;
+                       point the robot AT THE TOWER first — it ranges
+                       the tower, charges through, then does three
+                       90-degree clearing sweeps)
     Challenges live in their own files: any module with a run(sv)
-    function can be wired to a MENU button via self.challenge("name")
-    (Y is free). Upload challenge .py files alongside this one.
+    function can be wired to a MENU button via self.challenge("name").
+    Upload challenge .py files alongside this one.
   In MANUAL:
     Left stick Y    -> throttle        Right stick X -> steering
     B (Button 1)    -> TURBO toggle: raises the speed cap (0.8 -> 1.0)
@@ -143,11 +150,20 @@ MIN_EFFORT = 0.4
 # robot still turns in place (with a slight shimmy).
 WIGGLE_BIAS = 0.18          # fore/aft bias added to BOTH wheels
 WIGGLE_PERIOD_S = 0.22      # bias flips direction this often
+LEFT_TURN_BOOST = 1.2       # v1.15: this robot turns LEFT weaker than
+                            # right (observed on the field — one motor
+                            # is weaker in that rotation direction), so
+                            # CCW/left turns get 20% extra effort.
+                            # Tune: raise if left still lags, set 1.0
+                            # if the drivetrain is ever rebalanced.
 ASSIST_FWD_CM = 100.0       # D-pad UP drive distance
 ASSIST_FWD_EFFORT = 0.45
 ASSIST_FWD_EFFORT_TURBO = 0.6   # auto-forward speed while TURBO is on
 OBSTACLE_STOP_CM = 15.0     # stop early if something is closer than this
-ASSIST_TURN_EFFORT = 0.55
+ASSIST_TURN_EFFORT = 0.75  # v1.16: raised from 0.55 — the logs showed
+                            # first-pass turns timing out 40 deg short
+                            # while EVERY 0.8-effort retry finished in
+                            # under a second. This field needs ~0.75.
 TURN_CHUNK_DEG = 30         # turns run in chunks so START stays responsive
 TURN_TOL_DEG = 4.0
 FWD_KP = 0.02               # IMU heading-hold gain on the assist drive
@@ -479,9 +495,21 @@ class MainCode:
                     phase_ms = now
                     bias = -bias
                 # positive err = target is CCW/left: left wheel back,
-                # right wheel forward; the shared bias rides on both
-                eff = effort if err > 0 else -effort
-                drivetrain.set_effort(-eff + bias, eff + bias)
+                # right wheel forward; the shared bias rides on both.
+                # Left turns get LEFT_TURN_BOOST (weak-side motor).
+                mag = effort * (LEFT_TURN_BOOST if err > 0 else 1.0)
+                mag = min(0.95, mag)
+                eff = mag if err > 0 else -mag
+                l = -eff + bias
+                r = eff + bias
+                # per-wheel stiction floor (v1.15): the bias half-cycle
+                # used to dip the weak-side wheel below 0.4, where a
+                # marginal motor stalls — clamp magnitude, keep sign
+                if 0 < abs(l) < MIN_EFFORT:
+                    l = MIN_EFFORT if l > 0 else -MIN_EFFORT
+                if 0 < abs(r) < MIN_EFFORT:
+                    r = MIN_EFFORT if r > 0 else -MIN_EFFORT
+                drivetrain.set_effort(l, r)
                 time.sleep(0.01)
         finally:
             drivetrain.stop()
@@ -598,7 +626,13 @@ class MainCode:
             if BTN_X in hits:
                 self.wait_release(BTN_X)
                 return self.challenge("sumo_auto")
-            # ---- more challenge slots: same pattern (Y is free) ----
+            if BTN_Y in hits:              # v1.18: MAZE solver
+                self.wait_release(BTN_Y)
+                return self.challenge("maze_solver")
+            if DPAD_UP in hits:            # v1.17: AUTO SMASH TOWER
+                self.wait_release(DPAD_UP)
+                return self.challenge("tower_smash_auto")
+            # ---- more challenge slots: same pattern ----
             time.sleep(0.02)
 
     def manual_mode(self):
@@ -784,7 +818,7 @@ class MainCode:
 
 log_selftest()
 log("")
-log("======== BOOT: main_code v1.14 ======== batt=%.2fV" % battery_voltage())
+log("======== BOOT: main_code v1.18 ======== batt=%.2fV" % battery_voltage())
 if battery_voltage() < LOW_BATT_V:
     log("*** WARNING: battery LOW for a %d-cell pack (<%.1fV) ***"
         % (BATT_CELLS, LOW_BATT_V))

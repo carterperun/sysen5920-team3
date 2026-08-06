@@ -1,6 +1,30 @@
 """
 sumo_auto.py — SYSEN 5920 Team 3
-XRP Proving Ground: "Sumo" challenge (autonomous attempt) — v3.7
+XRP Proving Ground: "Sumo" challenge (autonomous attempt) — v4.11
+
+v4.11: SURVEY + GEO-FENCE — the robot keeps leaving the circle, so now
+it MEASURES the circle first and then refuses to drive out of it:
+  * SURVEY (at launch): drive straight to the ring line, back up 15cm,
+    turn 180, drive straight to the line on the far side. The two trip
+    points span a diameter — their midpoint IS the ring center. "Home"
+    (POSE origin) is rebased onto that surveyed center, and the radius
+    is measured on the way. Every go_home() now returns to the real
+    center, not to wherever the robot happened to be placed.
+  * GEO-FENCE: every push, sweep touch and BACKUP is capped by the
+    distance to the surveyed circle edge (chord math from the live
+    POSE). The logged ring exits came from the sweep: a backup stalled
+    at -1.5cm of -10, but the sweep cap still assumed the full 10cm of
+    retreat — so the next angled push drove 17cm from a spot right at
+    the line. Sweep caps now use the ACTUAL encoder-measured backup
+    distance AND the fence, whichever is smaller.
+  * A push stopped by the fence at the ring edge counts as a line touch
+    (the block is over the line even if a block on the tape kept the
+    sensors from tripping), so the finish sweep still runs.
+
+v4.0: DUAL-MODE. Importable by main_code.py (MENU -> X launches it; the
+supervisor owns PestoLink and its START button aborts mid-run via the
+_HOOKS["abort"] callback polled in every loop) or runnable standalone
+exactly as before (own PestoLink, Button 0 to launch).
 
 v3.3: motor efforts doubled (approach 0.35->0.7, push 0.28->0.56,
 turn 0.4->0.8) now that fresh batteries are assumed; heading-correction
@@ -73,29 +97,53 @@ Positive turn() / positive yaw = LEFT (CCW). Negative = RIGHT (CW).
 """
 
 from XRPLib.defaults import *
-from pestolink import PestoLinkAgent
+from XRPLib.pid import PID
 from machine import Pin, ADC
 import time
 import math
 import sys
+
+# Supervisor hook (v4): main_code.py sets _HOOKS["abort"] to its
+# check_abort so the controller's START button can stop this challenge
+# at any point. Standalone runs leave it as a no-op.
+_HOOKS = {"abort": lambda: None}
+
+def _abort():
+    _HOOKS["abort"]()
 
 # ----------------------------- CONFIGURATION -----------------------------
 
 ROBOT_NAME = "T3amThr3"     # BLE name shown in PestoLink (8 chars max)
 START_BUTTON = 0            # "A" on most gamepads (verify in the tester)
 
-# Ring geometry — v3.5: resized from the logged runs. The successful
-# cycle-2 push hit the ring line ~25cm from center, so this ring is
-# small (~30cm radius, not 60). MEASURE the real ring and update.
-RING_RADIUS_CM = 30.0       # ring radius; caps pushes and homing
+# Ring geometry — CONFIRMED by tape measure 8/6: ring radius is 30cm.
+# v4.11: this is now the FALLBACK — the launch survey measures the real
+# radius and center; RING_RADIUS_CM is used only if the survey fails.
+RING_RADIUS_CM = 30.0       # ring radius (measured); caps pushes/homing
+
+# SURVEY (v4.11): measure the ring before playing.
+SURVEY = True               # False = old behavior (assume start = center)
+SURVEY_BACK_CM = 15.0       # back away from the first line trip before
+                            # the 180 turn (customer spec)
+SENSOR_AHEAD_CM = 5.0       # reflectance sensors sit ~this far ahead of
+                            # the wheel axle; line trips happen this far
+                            # early, so the measured radius adds it back
+FENCE_MARGIN_CM = 4.0       # geo-fence keeps the AXLE this far inside
+                            # the surveyed line — wheels are on the axle,
+                            # so this is the wheel margin too. NOTE: the
+                            # survey chord runs through the START spot,
+                            # so sideways placement error survives into
+                            # the center estimate — place the robot
+                            # within a few cm of center and this margin
+                            # absorbs the rest
 SCAN_MAX_CM = 28.0          # accept scan echoes closer than this. Keep
                             # it inside the ring radius so blocks already
                             # out (and anything beyond the ring) are
                             # never targeted.
 CONTACT_CM = 5.0            # reading at/below this = block is on the nose
-PUSH_OVER_CM = 3.0          # extra shove so the block fully crosses
-                            # (some coast past the trip point is normal;
-                            # wheels must stay on our side of the tape)
+PUSH_OVER_CM = 0.0          # v4.7: the straight shove is retired — the
+                            # FINISH SWEEP (angled touches, see below)
+                            # now gets the block fully out instead
 RETURN_CM = 12.0            # back away from the line after each push
                             # (in a ~30cm ring, 12cm is already nearly
                             # halfway home)
@@ -124,9 +172,113 @@ LINE_DEBOUNCE = 2           # consecutive reads needed to trip (~20ms)
 # drive loop, so the tape was only checked every ~65ms — at speed, the
 # tape could pass between checks. Slow sensors now run on their own
 # slower schedule; the line check runs every ~10ms pass.
-APPROACH_EFFORT = 0.45
-PUSH_EFFORT = 0.38
-TURN_EFFORT = 0.5
+# v4.2: 0.4 is the working effort AND the hard floor. The logged runs
+# showed moves stalling because the XRPLib PIDs taper effort toward the
+# target (turns bottom out at 0.1, straights at 0.3) — below this
+# drivetrain's stiction. Custom PIDs below keep min_output at 0.4.
+# v4.4: REVERTED to the v4.2 motion numbers after the v4.3 bump failed
+# its test — back to the values from the successful 8/6 run. The only
+# keeper from v4.3 is a slightly stronger backup (the logged backups
+# stalled at -2cm of -12), and the turn-PID tolerance fix (see
+# _turn_pid) which addresses the real turning problem.
+APPROACH_EFFORT = 0.55      # v4.10: 0.45 approaches were crawling/
+                            # freezing under battery sag
+PUSH_EFFORT = 0.7           # v4.9: raised again (0.45 -> 0.6 -> 0.7),
+                            # pushes were still slow under block+floor
+                            # friction. Line check runs every ~10ms
+                            # pass, so the tape is still sampled every
+                            # ~0.6cm even at this speed.
+TURN_EFFORT = 0.75          # v4.8: raised from 0.5 — manual-mode logs
+                            # showed 0.55-effort turns timing out while
+                            # 0.8-effort retries finished instantly
+BACKUP_EFFORT = 0.7         # v4.10: reverse STILL stalled at 0.55
+                            # (drove -1.5cm of -12 in the logs)
+MIN_EFFORT = 0.4            # no wheel / no PID output ever weaker than this
+
+# FINISH SWEEP (v4.7): on the main push's line trip, instead of one
+# deep shove, the block is pushed fully out with three angled touches
+# (sensors trip ahead of the wheels, so every touch stops with the
+# wheels inside the ring):
+#   1. back up SWEEP_BACK_CM      2. turn LEFT 45, push to the line
+#   3. back up again              4. turn RIGHT 90 (net 45 right of the
+#      original heading), push to the line once more
+SWEEP_BACK_CM = 10.0        # backup before each angled touch
+SWEEP_ANGLE_DEG = 45        # first sweep angle (left), then 90 right
+SWEEP_OVERDRIVE_CM = 2.0    # sensors may pass the nominal line position
+                            # by this much per touch (absorbs geometry
+                            # slop; tape is 3.7cm wide)
+# v4.9: sweep drive caps are now DERIVED from the original straight-on
+# line trip, so the wheels cannot cross even if the sensors never
+# re-trip (e.g. the pushed block is sitting on the tape):
+#   * after backing B=10cm along the approach normal, the sensors are
+#     10cm inside the line. Driving at 45 deg closes the gap at
+#     cos(45)=0.707 per cm, so the line is at 10/0.707 = 14.1cm;
+#     cap1 = (10+2)/0.707 = 17.0cm  (sensors at most 2cm past the line;
+#     wheels ~6cm behind them would need 22.6cm to cross).
+#   * after touch 1, backing 10cm along the 45-deg heading retreats
+#     only 10*0.707 = 7.1cm perpendicular; cap2 = 10 + 2/0.707 = 12.8cm
+#     (wheels would need 18.5cm to cross). Margin holds on both legs.
+
+# Paddle stow (v4.4: OFF by default — introduced in v4.3, and if the
+# stow angle left the paddle in front of the rangefinder it could
+# explain the failed run; enable deliberately after a bench check).
+PADDLE_STOW = False
+PADDLE_STOW_DEG = 90
+
+# WIGGLE TURNS (v4.5): field friction stalls pure in-place turns, so
+# every turn superimposes a small alternating fore/aft bias on the
+# counter-rotation — each wheel keeps breaking static friction, the
+# biases cancel over a cycle, and the robot turns in place with a
+# slight shimmy instead of loading up and stalling.
+WIGGLE_BIAS = 0.18
+WIGGLE_PERIOD_S = 0.22
+WIGGLE_TOL_DEG = 3.0
+LEFT_TURN_BOOST = 1.2       # this robot turns LEFT (CCW) weaker than
+                            # right — matches main_code v1.15
+
+def wiggle_turn(degrees, effort, timeout_s=None):
+    """Relative in-place turn with the anti-friction wiggle. IMU-
+    verified; polls the supervisor abort every pass. True = reached."""
+    target = imu.get_yaw() + degrees
+    if timeout_s is None:
+        timeout_s = 1.5 + abs(degrees) / 90.0 * 2.0
+    t0 = time.ticks_ms()
+    phase_ms = t0
+    bias = WIGGLE_BIAS
+    try:
+        while True:
+            _abort()
+            err = normalize(target - imu.get_yaw())
+            if abs(err) <= WIGGLE_TOL_DEG:
+                return True
+            now = time.ticks_ms()
+            if time.ticks_diff(now, t0) > timeout_s * 1000:
+                log("wiggle turn: timeout, %.0f deg short" % err)
+                return False
+            if time.ticks_diff(now, phase_ms) >= WIGGLE_PERIOD_S * 1000:
+                phase_ms = now
+                bias = -bias
+            # left/CCW turns get LEFT_TURN_BOOST (weak-side motor), and
+            # each wheel's magnitude is floored at MIN_EFFORT so the
+            # bias half-cycle can't dip a wheel into the stall zone
+            mag = min(0.95, effort * (LEFT_TURN_BOOST if err > 0 else 1.0))
+            eff = mag if err > 0 else -mag
+            l = -eff + bias
+            r = eff + bias
+            if 0 < abs(l) < MIN_EFFORT:
+                l = MIN_EFFORT if l > 0 else -MIN_EFFORT
+            if 0 < abs(r) < MIN_EFFORT:
+                r = MIN_EFFORT if r > 0 else -MIN_EFFORT
+            drivetrain.set_effort(l, r)
+            time.sleep(0.01)
+    finally:
+        drivetrain.stop()
+
+def _straight_pid(max_eff):
+    """Fresh straight-drive PID per call, same stiction floor."""
+    return PID(kp=0.1, ki=0.04, kd=0.04,
+               min_output=MIN_EFFORT, max_output=max_eff,
+               max_integral=10, tolerance=0.25, tolerance_count=3)
 PUSH_KP = 0.02              # IMU heading-hold gain during pushes
 PUSH_CORR_MAX = 0.15        # heading-correction clamp (scaled with effort)
 SLOW_CHECK_S = 0.15         # period for ultrasonic-based checks (slip /
@@ -165,15 +317,16 @@ def battery_voltage():
 
 _LOG_BROKEN = {"reported": False}
 
-def log(msg):
-    """Timestamped line to console AND flash file, flushed immediately so
-    the last lines survive a crash or power loss. v3.6: a file-write
-    failure is now REPORTED (console + the boot self-test LED) instead of
-    silently swallowed — a brownout mid-write can corrupt the filesystem
-    and previously that just made the log go quiet."""
+def log(msg, console=True):
+    """Timestamped line to flash (always) and console (unless
+    console=False). v4.10: heartbeats are file-only — an attached BLE
+    console blocks ~1s per print, which slowed the control loop to ~1Hz
+    and let the robot cross the ring tape between line checks (the
+    drive-out-of-the-ring failure)."""
     t = time.ticks_diff(time.ticks_ms(), _BOOT_MS) / 1000
     line = "[%8.2fs] %s" % (t, msg)
-    print(line)
+    if console:
+        print(line)
     if LOG_TO_FILE:
         try:
             f = open(LOG_PATH, "a")
@@ -302,11 +455,12 @@ def turn_to_heading(target_yaw, effort):
     fell apart. Now each turn is checked against the IMU and re-commanded
     with escalating effort until it's within TURN_TOL_DEG."""
     for attempt in range(TURN_RETRIES):
+        _abort()
         delta = normalize(target_yaw - imu.get_yaw())
         if abs(delta) <= TURN_TOL_DEG:
             return True
         boosted = min(0.9, effort + 0.15 * attempt)
-        drivetrain.turn(delta, boosted, timeout=3)
+        wiggle_turn(delta, boosted, timeout_s=3)
     final_err = normalize(target_yaw - imu.get_yaw())
     if abs(final_err) > TURN_TOL_DEG:
         log("turn: STALLED %.0f deg short of target (battery?)" % final_err)
@@ -320,23 +474,64 @@ def traveled_since(start_l, start_r):
 
 POSE = {"x": 0.0, "y": 0.0}
 
+# Ring model (v4.11): center is ALWAYS POSE (0,0). Before the survey
+# that's just "where the robot started"; after the survey the POSE is
+# rebased so (0,0) is the measured center of the circle.
+RING = {"r": RING_RADIUS_CM, "surveyed": False}
+
 def record_move(dist_cm):
     rad = math.radians(imu.get_yaw())
     POSE["x"] += dist_cm * math.cos(rad)
     POSE["y"] += dist_cm * math.sin(rad)
 
+def dist_from_center():
+    return math.sqrt(POSE["x"] * POSE["x"] + POSE["y"] * POSE["y"])
+
+def fence_remaining(heading_deg=None):
+    """GEO-FENCE (v4.11): how far the robot can travel along a heading
+    before the axle reaches the ring line minus FENCE_MARGIN_CM. Chord
+    math on the surveyed circle: solve |P + t*u| = r_safe for t."""
+    r_safe = RING["r"] - FENCE_MARGIN_CM
+    if heading_deg is None:
+        heading_deg = imu.get_yaw()
+    rad = math.radians(heading_deg)
+    ux, uy = math.cos(rad), math.sin(rad)
+    px, py = POSE["x"], POSE["y"]
+    p_u = px * ux + py * uy
+    disc = p_u * p_u - (px * px + py * py - r_safe * r_safe)
+    if disc <= 0:
+        return 0.0          # already at/outside the safe circle
+    return max(0.0, -p_u + math.sqrt(disc))
+
 def straight_tracked(dist_cm, effort, timeout=4):
     """Straight move that records what the ENCODERS say actually
     happened, not what was commanded — a stalled/timed-out move used to
-    poison the pose map with distance the robot never drove."""
+    poison the pose map with distance the robot never drove.
+    v4.11: RETURNS the actual signed distance so callers (the sweep
+    caps) can plan from reality, not from the command."""
     start_l = drivetrain.get_left_encoder_position()
     start_r = drivetrain.get_right_encoder_position()
-    drivetrain.straight(dist_cm, effort, timeout=timeout)
+    drivetrain.straight(dist_cm, effort, timeout=timeout,
+                        main_controller=_straight_pid(abs(effort)))
     actual = traveled_since(start_l, start_r)
     record_move(actual)
     if abs(actual - dist_cm) > 5:
         log("straight: commanded %.1fcm, drove %.1fcm (stall?)"
             % (dist_cm, actual))
+    return actual
+
+def bounded_backup(dist_cm, effort=BACKUP_EFFORT, timeout=3, tag="backup"):
+    """Reverse, but never over the ring line: the requested distance is
+    clamped to the fence along the REVERSE heading first. Returns the
+    actual distance backed (positive cm)."""
+    allow = fence_remaining(imu.get_yaw() + 180.0)
+    d = min(dist_cm, allow)
+    if d < dist_cm - 0.5:
+        log("%s: GEO-FENCED %.1f -> %.1fcm (ring line behind)"
+            % (tag, dist_cm, d))
+    if d < 0.5:
+        return 0.0
+    return -straight_tracked(-d, effort, timeout=timeout)
 
 def drive_watching(effort, stop_check, max_cm, hold_yaw=None, tag="drive"):
     """Drive forward until stop_check() returns a reason, the tape shows
@@ -348,7 +543,10 @@ def drive_watching(effort, stop_check, max_cm, hold_yaw=None, tag="drive"):
     last_beat = time.ticks_ms()
     last_slow = 0
     result = "cap"
+    FLOOR["hits"] = 0        # a stale debounce count from the previous
+                             # trip must not instantly re-trip this drive
     while True:
+        _abort()                 # START stays live during every drive
         # LINE CHECK EVERY PASS — reflectance reads are microseconds, so
         # this loop spins ~every 10ms and cannot step over the tape.
         if line_detected():
@@ -376,7 +574,10 @@ def drive_watching(effort, stop_check, max_cm, hold_yaw=None, tag="drive"):
         if hold_yaw is not None:
             err = normalize(hold_yaw - imu.get_yaw())
             corr = max(-PUSH_CORR_MAX, min(PUSH_CORR_MAX, PUSH_KP * err))
-            drivetrain.set_effort(effort - corr, effort + corr)
+            # stiction floor: heading corrections speed the fast wheel
+            # up rather than slowing the slow wheel into the dead zone
+            drivetrain.set_effort(max(MIN_EFFORT, effort - corr),
+                                  max(MIN_EFFORT, effort + corr))
         else:
             drivetrain.set_effort(effort, effort)
         now = time.ticks_ms()
@@ -387,7 +588,8 @@ def drive_watching(effort, stop_check, max_cm, hold_yaw=None, tag="drive"):
             # the heartbeat would blind the line check for ~2cm of travel
             log("%s: hb L=%.3f R=%.3f yaw=%+.1f trav=%.1fcm batt=%.2fV"
                 % (tag, l, r, imu.get_yaw(),
-                   traveled_since(start_l, start_r), battery_voltage()))
+                   traveled_since(start_l, start_r), battery_voltage()),
+                console=False)
         time.sleep(0.01)
     drivetrain.stop()
     record_move(traveled_since(start_l, start_r))
@@ -404,6 +606,60 @@ def go_home():
     turn_to_heading(bearing, TURN_EFFORT)
     straight_tracked(d, APPROACH_EFFORT, timeout=6)
 
+# ------------------------------- SURVEY ----------------------------------
+
+def survey_ring():
+    """v4.11 launch survey: drive straight to the line, back up
+    SURVEY_BACK_CM, turn 180, drive straight to the line on the far
+    side. The two trip points span a diameter; their midpoint is the
+    ring CENTER and half their separation (+ sensor offset) is the
+    RADIUS. POSE is rebased so Home (0,0) = that center, then the robot
+    drives home. Returns True on success; on any failure it logs, keeps
+    the tape-measured fallback geometry, and goes home."""
+    log("survey: leg 1 — driving straight to the line")
+    yaw0 = imu.get_yaw()
+    out = drive_watching(APPROACH_EFFORT, None,
+                         max_cm=RING_RADIUS_CM * 1.6,
+                         hold_yaw=yaw0, tag="survey1")
+    if out != "line":
+        log("survey: no line on leg 1 (%s) — using tape-measured "
+            "geometry instead" % out)
+        go_home()
+        return False
+    ax, ay = POSE["x"], POSE["y"]
+    straight_tracked(-SURVEY_BACK_CM, BACKUP_EFFORT, timeout=4)
+    if not turn_to_heading(yaw0 + 180.0, TURN_EFFORT):
+        log("survey: 180 turn failed — using tape-measured geometry")
+        go_home()
+        return False
+    log("survey: leg 2 — driving to the far side")
+    out = drive_watching(APPROACH_EFFORT, None,
+                         max_cm=RING_RADIUS_CM * 2.0 * 1.3,
+                         hold_yaw=imu.get_yaw(), tag="survey2")
+    if out != "line":
+        log("survey: no line on leg 2 (%s) — using tape-measured "
+            "geometry" % out)
+        go_home()
+        return False
+    bx, by = POSE["x"], POSE["y"]
+    cx, cy = (ax + bx) / 2.0, (ay + by) / 2.0
+    dx, dy = ax - bx, ay - by
+    r = math.sqrt(dx * dx + dy * dy) / 2.0 + SENSOR_AHEAD_CM
+    if not (0.6 * RING_RADIUS_CM) < r < (1.5 * RING_RADIUS_CM):
+        log("survey: measured radius %.1fcm implausible (expected ~%.0f)"
+            " — keeping the tape-measured value" % (r, RING_RADIUS_CM))
+        r = RING_RADIUS_CM
+    # Rebase the pose map: the surveyed center becomes (0,0) = Home.
+    POSE["x"] -= cx
+    POSE["y"] -= cy
+    RING["r"] = r
+    RING["surveyed"] = True
+    log("survey: HOME set — center was (%.1f, %.1f) from the start "
+        "spot, radius=%.1fcm" % (cx, cy, r))
+    bounded_backup(SWEEP_BACK_CM, tag="survey back")
+    go_home()
+    return True
+
 # ------------------------------ BEHAVIORS --------------------------------
 
 def rotate_until_block():
@@ -416,19 +672,24 @@ def rotate_until_block():
     rotated, the run aborts with a red LED and a loud log line instead
     of pretending to scan for a minute."""
     for step in range(FULL_SWEEP_STEPS):
+        _abort()                 # START stays live during the scan
         d = front_distance()
         if d < SCAN_MAX_CM:
             log("scan: hit at step %d, d=%.1fcm yaw=%+.1f"
                 % (step, d, imu.get_yaw()))
             return d
         yaw_before = imu.get_yaw()
-        drivetrain.turn(SCAN_STEP_DEG, TURN_EFFORT, timeout=2)
-        if step == 0 and abs(imu.get_yaw() - yaw_before) < 3.0:
+        wiggle_turn(SCAN_STEP_DEG, TURN_EFFORT, timeout_s=2)
+        # v4.8: motor-alive threshold loosened 3.0 -> 1.5 deg. A SLOW
+        # turn (friction) was reading as "dead motors" and aborting the
+        # whole run 4 seconds in — only near-zero rotation after a
+        # full-effort retry should count as dead.
+        if step == 0 and abs(imu.get_yaw() - yaw_before) < 1.5:
             log("scan: first turn didn't move (yaw %+.1f -> %+.1f) — "
                 "retrying at full effort"
                 % (yaw_before, imu.get_yaw()))
-            drivetrain.turn(SCAN_STEP_DEG, 0.9, timeout=2)
-            if abs(imu.get_yaw() - yaw_before) < 3.0:
+            wiggle_turn(SCAN_STEP_DEG, 0.9, timeout_s=3)
+            if abs(imu.get_yaw() - yaw_before) < 1.5:
                 log("*** MOTORS NOT MOVING. Check the motor power "
                     "switch and battery pack. Aborting run. ***")
                 set_status(255, 0, 0)        # red = motors dead
@@ -454,11 +715,12 @@ def fine_aim(coarse_d):
     coarse distance, go back to the exact heading where the coarse scan
     saw the block instead of trusting the sweep."""
     coarse_yaw = imu.get_yaw()
-    drivetrain.turn(-FINE_STEP_DEG, TURN_EFFORT, timeout=2)
+    wiggle_turn(-FINE_STEP_DEG, TURN_EFFORT, timeout_s=1.5)
     best_yaw = imu.get_yaw()
     best_d = front_distance()
     for _ in range(FINE_SPAN_STEPS - 1):
-        drivetrain.turn(FINE_STEP_DEG, TURN_EFFORT, timeout=2)
+        _abort()
+        wiggle_turn(FINE_STEP_DEG, TURN_EFFORT, timeout_s=1.5)
         d = front_distance()
         if d < best_d:
             best_d = d
@@ -490,11 +752,58 @@ def make_slip_checker():
         return None
     return check
 
+def finish_sweep():
+    """v4.7: after the main push trips the line, push the block FULLY
+    out with two angled follow-up touches. Every touch ends on a line
+    trip (sensors sit ahead of the wheels, so the wheels stay inside
+    the ring), and every leg polls the supervisor abort.
+
+    v4.11: THE RING-EXIT FIX. The old caps assumed the 10cm backups
+    actually happened — the logs show them stalling at -1.5cm, after
+    which a 17cm angled push from a spot right at the line drove the
+    robot out of the circle. Each cap is now computed from the ACTUAL
+    encoder-measured backup distance AND clamped by the geo-fence to
+    the surveyed circle, whichever is smaller. A touch with no room
+    is skipped outright."""
+    c = math.cos(math.radians(SWEEP_ANGLE_DEG))
+
+    # touch 1 happened (the main push). Back off, angle LEFT, touch.
+    b1 = bounded_backup(SWEEP_BACK_CM, tag="sweep back1")
+    wiggle_turn(SWEEP_ANGLE_DEG, TURN_EFFORT)
+    cap1 = min((b1 + SWEEP_OVERDRIVE_CM) / c, fence_remaining())
+    if cap1 < 1.0:
+        log("sweep: no room for the LEFT touch (backed %.1fcm, fence "
+            "%.1fcm) — skipping it" % (b1, fence_remaining()))
+    else:
+        log("sweep: LEFT %d deg, push to line (cap %.1fcm, backed "
+            "%.1fcm)" % (SWEEP_ANGLE_DEG, cap1, b1))
+        out = drive_watching(PUSH_EFFORT, None, max_cm=cap1,
+                             hold_yaw=imu.get_yaw(), tag="sweepL")
+        if out != "line":
+            log("sweep: left touch ended on the cap (no sensor trip — "
+                "block may be covering the tape); continuing safely")
+    # back off, swing RIGHT 90 (net 45 right of the original heading),
+    # touch the line once more from that side.
+    b2 = bounded_backup(SWEEP_BACK_CM, tag="sweep back2")
+    wiggle_turn(-2 * SWEEP_ANGLE_DEG, TURN_EFFORT)
+    cap2 = min(b2 + SWEEP_OVERDRIVE_CM / c, fence_remaining())
+    if cap2 < 1.0:
+        log("sweep: no room for the RIGHT touch (backed %.1fcm, fence "
+            "%.1fcm) — skipping it" % (b2, fence_remaining()))
+    else:
+        log("sweep: RIGHT %d deg, final push (cap %.1fcm, backed "
+            "%.1fcm)" % (SWEEP_ANGLE_DEG, cap2, b2))
+        out = drive_watching(PUSH_EFFORT, None, max_cm=cap2,
+                             hold_yaw=imu.get_yaw(), tag="sweepR")
+        if out != "line":
+            log("sweep: right touch ended on the cap")
+
 def push_out_one_block(cycle):
     """Find a block, drive to contact, push it over the tape, return to
     center. True = keep looping, False = ring is clear."""
-    log("--- cycle %d --- batt=%.2fV pose=(%.1f, %.1f)"
-        % (cycle, battery_voltage(), POSE["x"], POSE["y"]))
+    log("--- cycle %d --- batt=%.2fV pose=(%.1f, %.1f) center-dist=%.1f"
+        % (cycle, battery_voltage(), POSE["x"], POSE["y"],
+           dist_from_center()))
     dist = rotate_until_block()
     if dist is None:
         return False
@@ -502,11 +811,15 @@ def push_out_one_block(cycle):
 
     def near():
         return "contact" if front_distance() <= CONTACT_CM else None
-    outcome = drive_watching(APPROACH_EFFORT, near, max_cm=dist + 15.0,
+    # v4.11: the approach is fenced too — an echo can never pull the
+    # robot past the surveyed line (contact or the tape stop it first
+    # in a normal run; the fence is the backstop).
+    outcome = drive_watching(APPROACH_EFFORT, near,
+                             max_cm=min(dist + 15.0, fence_remaining()),
                              hold_yaw=imu.get_yaw(), tag="approach")
     if outcome == "line":
         log("approach: tape before contact — echo was outside the ring")
-        straight_tracked(-RETURN_CM, APPROACH_EFFORT, timeout=3)
+        bounded_backup(RETURN_CM, tag="return")
         go_home()
         return True
     if outcome == "cap":
@@ -515,20 +828,31 @@ def push_out_one_block(cycle):
         return True
 
     push_yaw = imu.get_yaw()
-    log("push: contact made, pushing along yaw %+.1f" % push_yaw)
+    log("push: contact made, pushing along yaw %+.1f (fence %.1fcm)"
+        % (push_yaw, fence_remaining(push_yaw)))
     outcome = drive_watching(PUSH_EFFORT, make_slip_checker(),
-                             max_cm=RING_RADIUS_CM * 1.5,
+                             max_cm=min(RING["r"] * 1.2,
+                                        fence_remaining(push_yaw)),
                              hold_yaw=push_yaw, tag="push")
     if outcome == "slip":
         log("push: block slipped off — regrouping")
         go_home()
         return True
 
-    if outcome == "line" and PUSH_OVER_CM > 0:
-        straight_tracked(PUSH_OVER_CM, PUSH_EFFORT, timeout=2)
-        log("push: block shoved %.1fcm past the line" % PUSH_OVER_CM)
+    if outcome == "cap" and \
+            dist_from_center() >= RING["r"] - SENSOR_AHEAD_CM - 2.0:
+        # Fence-stopped right at the ring edge: the block is over the
+        # line even though the sensors never tripped (a block sitting
+        # ON the tape blocks the view of it). Score it.
+        log("push: geo fence stopped at the ring edge — counting as a "
+            "line touch")
+        outcome = "line"
 
-    straight_tracked(-RETURN_CM, APPROACH_EFFORT, timeout=3)
+    if outcome == "line":
+        finish_sweep()               # angled touches push the block out
+        log("cycle: SCORED — push + 3-touch sweep complete")
+
+    bounded_backup(RETURN_CM, tag="return")
     go_home()
     return True
 
@@ -558,10 +882,89 @@ def wait_for_start(pestolink):
     while pestolink.get_button(START_BUTTON) or board.is_button_pressed():
         time.sleep(0.02)
 
-def main():
+def run(sv=None):
+    """Supervisor entry point (v4): main_code.py imports this module and
+    calls run(self). Place the robot at RING CENTER before pressing the
+    menu button — that press IS the launch. sv.check_abort() (START) can
+    end the run at any moment; the supervisor catches MenuAbort and any
+    crash, so this function just does the work. Crashes are logged here
+    to sumo_log.txt too (and re-raised for the supervisor)."""
+    if sv is not None:
+        _HOOKS["abort"] = sv.check_abort
+        # Supervisor launches skip the standalone boot path, so do the
+        # log health check + a launch marker here — every run must leave
+        # a reviewable trail in sumo_log.txt no matter how it started.
+        log_selftest()
+        log("===== SUMO launch (from supervisor menu) =====")
+    try:
+        drivetrain.stop()
+        if PADDLE_STOW:
+            # Raise the paddle to a known angle so it can't drag on the
+            # floor (the 8/6 run's backups all stalled — a low paddle
+            # raking backward is the prime suspect), then cut power.
+            try:
+                servo_one.set_angle(PADDLE_STOW_DEG)
+                time.sleep(0.4)
+                servo_one.free()
+                log("paddle stowed at %d deg" % PADDLE_STOW_DEG)
+            except Exception:
+                log("paddle stow skipped (no servo?)")
+        POSE["x"] = POSE["y"] = 0.0
+        RING["r"] = RING_RADIUS_CM
+        RING["surveyed"] = False
+        FLOOR["hits"] = 0
+
+        pushes = 0
+        start = time.ticks_ms()
+        try:
+            log("run start: batt=%.2fV yaw=%+.1f"
+                % (battery_voltage(), imu.get_yaw()))
+            log("config v4.11: appr=%.2f push=%.2f turn=%.2f backup=%.2f "
+                "ring=%.0fcm scan<%.0fcm contact<%.0fcm sweep=%d/%.0fcm "
+                "survey=%s fence=%.0fcm"
+                % (APPROACH_EFFORT, PUSH_EFFORT, TURN_EFFORT,
+                   BACKUP_EFFORT, RING_RADIUS_CM, SCAN_MAX_CM,
+                   CONTACT_CM, SWEEP_ANGLE_DEG, SWEEP_BACK_CM,
+                   SURVEY, FENCE_MARGIN_CM))
+            if battery_voltage() < LOW_BATT_V:
+                log("*** WARNING: battery LOW at launch (%.2fV, %d-cell) "
+                    "***" % (battery_voltage(), BATT_CELLS))
+            capture_floor_baseline()     # start spot = off the tape
+
+            if SURVEY:
+                # v4.11: measure the real circle and set Home at its
+                # center before hunting blocks. Place the robot roughly
+                # mid-ring facing any direction; it finds the rest.
+                survey_ring()
+
+            while pushes < MAX_PUSHES:
+                _abort()
+                if time.ticks_diff(time.ticks_ms(), start) \
+                        > MAX_RUNTIME_S * 1000:
+                    log("time cap %.0fs reached" % MAX_RUNTIME_S)
+                    break
+                if not push_out_one_block(pushes + 1):
+                    break
+                pushes += 1
+        except Exception as e:
+            if type(e).__name__ != "MenuAbort":   # aborts aren't crashes
+                log_exception(e)
+            raise
+        finally:
+            drivetrain.stop()
+            set_status(0, 255, 0)
+            log("DONE: %d push cycles, batt=%.2fV"
+                % (pushes, battery_voltage()))
+    finally:
+        _HOOKS["abort"] = lambda: None            # detach the hook
+
+# ------------------------- STANDALONE OPERATION --------------------------
+
+def _standalone():
+    from pestolink import PestoLinkAgent
     log_selftest()                   # RED LED at boot = log file broken
     log("")
-    log("=========== BOOT: sumo_auto v3.7 =========== batt=%.2fV"
+    log("=========== BOOT: sumo_auto v4.11 (standalone) ====== batt=%.2fV"
         % battery_voltage())
     if battery_voltage() < LOW_BATT_V:
         log("*** WARNING: battery LOW for a %d-cell pack (<%.1fV). "
@@ -570,47 +973,19 @@ def main():
             % (BATT_CELLS, LOW_BATT_V))
 
     pestolink = PestoLinkAgent(ROBOT_NAME)
-
     board.led_on()
     set_status(255, 120, 0)
     drivetrain.stop()
-
     wait_for_start(pestolink)
-
     set_status(0, 255, 255)
     time.sleep(0.5)
-
-    POSE["x"] = POSE["y"] = 0.0
-
-    pushes = 0
-    start = time.ticks_ms()
     try:
-        # (inside the try since v3.6 so a crash anywhere gets logged)
-        log("run start: batt=%.2fV yaw=%+.1f" % (battery_voltage(),
-                                                 imu.get_yaw()))
-        if battery_voltage() < LOW_BATT_V:
-            log("*** WARNING: battery LOW at launch (%.2fV, %d-cell) ***"
-                % (battery_voltage(), BATT_CELLS))
-        capture_floor_baseline()     # robot is at ring center = off tape
-
-        while pushes < MAX_PUSHES:
-            if time.ticks_diff(time.ticks_ms(), start) > MAX_RUNTIME_S * 1000:
-                log("time cap %.0fs reached" % MAX_RUNTIME_S)
-                break
-            if not push_out_one_block(pushes + 1):
-                break
-            pushes += 1
-    except Exception as e:
-        log_exception(e)
-        raise
+        run()
     finally:
-        drivetrain.stop()
-        set_status(0, 255, 0)
         board.led_blink(4)
-        log("DONE: %d push cycles, batt=%.2fV" % (pushes,
-                                                  battery_voltage()))
 
-main()
+if __name__ == "__main__":
+    _standalone()
 
 # ------------------------------ TEST NOTES --------------------------------
 # Reading sumo_log.txt after a bad run:
