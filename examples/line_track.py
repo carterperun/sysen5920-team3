@@ -1,8 +1,8 @@
 from XRPLib.defaults import *
 import time
 
-base_effort = 0.25
-KP = 0.6
+base_effort = 0.4
+KP = 0.4
 
 while True:
     left = reflectance.get_left()
